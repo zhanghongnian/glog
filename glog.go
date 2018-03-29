@@ -80,6 +80,7 @@ import (
 	stdLog "log"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -92,8 +93,8 @@ import (
 // the flag.Value interface. The -stderrthreshold flag is of type severity and
 // should be modified only through the flag.Value interface. The values match
 // the corresponding constants in C++.
-type severity int32 // sync/atomic int32
-
+type severity int32  // sync/atomic int32
+type printtype int32 //
 // These constants identify the log levels in order of increasing severity.
 // A message written to a high-severity log file is also written to each
 // lower-severity log file.
@@ -103,6 +104,10 @@ const (
 	errorLog
 	fatalLog
 	numSeverity = 4
+
+	tprint printtype = iota
+	tprintln
+	tprintf
 )
 
 const severityChar = "IWEF"
@@ -629,7 +634,8 @@ func (buf *buffer) someDigits(i, d int) int {
 
 func (l *loggingT) println(s severity, args ...interface{}) {
 	buf, file, line := l.header(s, 0)
-	fmt.Fprintln(buf, args...)
+	l.transCardNo(tprintln, buf, "", args...)
+	// fmt.Fprintln(buf, args...)
 	l.output(s, buf, file, line, false)
 }
 
@@ -639,7 +645,8 @@ func (l *loggingT) print(s severity, args ...interface{}) {
 
 func (l *loggingT) printDepth(s severity, depth int, args ...interface{}) {
 	buf, file, line := l.header(s, depth)
-	fmt.Fprint(buf, args...)
+	l.transCardNo(tprintf, buf, "", args...)
+	// fmt.Fprint(buf, args...)
 	if buf.Bytes()[buf.Len()-1] != '\n' {
 		buf.WriteByte('\n')
 	}
@@ -648,11 +655,55 @@ func (l *loggingT) printDepth(s severity, depth int, args ...interface{}) {
 
 func (l *loggingT) printf(s severity, format string, args ...interface{}) {
 	buf, file, line := l.header(s, 0)
-	fmt.Fprintf(buf, format, args...)
+	l.transCardNo(tprintln, buf, format, args...)
+	// fmt.Fprintf(buf, format, args...)
 	if buf.Bytes()[buf.Len()-1] != '\n' {
 		buf.WriteByte('\n')
 	}
 	l.output(s, buf, file, line, false)
+}
+
+func (l *loggingT) transCardNo(t printtype, buf io.Writer, format string, args ...interface{}) {
+	if len(args) > 0 {
+		for i := range args {
+			val := reflect.ValueOf(args[i])
+			if val.Type().Kind() == reflect.Struct {
+				if val.FieldByName("CardNo").IsValid() ||
+					val.FieldByName("OwnCardNo").IsValid() ||
+					val.FieldByName("CH_CARD_NO").IsValid() ||
+					val.FieldByName("CH_JD_CARD_NO").IsValid() ||
+					val.FieldByName("CH_BANK_CARD_NO").IsValid() ||
+					val.FieldByName("CH_OWN_CARD_NO").IsValid() {
+					struct2Map := make(map[string]interface{}, val.NumField())
+					for i := 0; i < val.NumField(); i++ {
+						if val.Type().Field(i).Name != "CardNo" &&
+							val.Type().Field(i).Name != "OwnCardNo" &&
+							val.Type().Field(i).Name != "CH_CARD_NO" &&
+							val.Type().Field(i).Name != "CH_JD_CARD_NO" &&
+							val.Type().Field(i).Name != "CH_BANK_CARD_NO" &&
+							val.Type().Field(i).Name != "CH_OWN_CARD_NO" {
+							struct2Map[val.Type().Field(i).Name] = val.Field(i).Interface()
+						} else {
+							str, ok := val.Field(i).Interface().(string)
+							if ok {
+								struct2Map[val.Type().Field(i).Name] = shrineCardNo(str)
+							}
+						}
+					}
+					args[i] = struct2Map
+				}
+			}
+		}
+
+		switch t {
+		case tprint:
+			fmt.Fprint(buf, args...)
+		case tprintln:
+			fmt.Fprintln(buf, args...)
+		case tprintf:
+			fmt.Fprintf(buf, format, args...)
+		}
+	}
 }
 
 // printWithFileLine behaves like print but uses the provided file and line number.  If
@@ -1177,4 +1228,37 @@ func Exitln(args ...interface{}) {
 func Exitf(format string, args ...interface{}) {
 	atomic.StoreUint32(&fatalNoStacks, 1)
 	logging.printf(fatalLog, format, args...)
+}
+
+func shrineCardNo(cardNo string) (shrineStr string) {
+	// 长度小于7位的不作处理
+	l := len(cardNo)
+	if l <= 7 {
+		shrineStr = cardNo
+		return
+	}
+	// 7 ～ 10, 前两位+后四位显示
+	if l <= 10 {
+		shrineStr = strMask(cardNo, 2, l-6)
+		return
+	}
+	// 10位以上的，前6位+后四位显示
+	shrineStr = strMask(cardNo, 6, l-10)
+	return
+}
+
+func strMask(number string, offset int, bit int) (out string) {
+	b := []rune(number)
+	l := len(b)
+	if l < offset+1 {
+		out = number
+		return
+	} else {
+		if l > offset+bit {
+			out = string(b[0:offset]) + strings.Repeat("*", bit) + string(b[offset+bit:])
+		} else {
+			out = string(b[0:offset]) + strings.Repeat("*", l-offset)
+		}
+	}
+	return
 }
