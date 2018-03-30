@@ -1298,21 +1298,8 @@ func shrineCardNo(cardNo string) (shrineStr string) {
 	return
 }
 
-func shrineIdentity(id string) (shrineStr string) {
-	// 长度小于5位的不作处理
-	l := len(id)
-	if l <= 4 {
-		shrineStr = id
-		return
-	}
-	// 5 ～ 13, 前两位+后两位显示
-	if l <= 13 {
-		shrineStr = strMask(id, 2, l-4)
-		return
-	}
-	// 13位以上的，前3位+后4位显示
-	shrineStr = strMask(id, 3, l-7)
-	return
+func shrineIdentity(id string) string {
+	return strMask(id, 4, 10)
 }
 
 func strMask(number string, offset int, bit int) (out string) {
