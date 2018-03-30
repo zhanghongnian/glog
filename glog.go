@@ -667,7 +667,7 @@ func (buf *buffer) someDigits(i, d int) int {
 
 func (l *loggingT) println(s severity, args ...interface{}) {
 	buf, file, line := l.header(s, 0)
-	l.transCardNo(tprintln, buf, "", args...)
+	l.filter(tprintln, buf, "", args...)
 	// fmt.Fprintln(buf, args...)
 	l.output(s, buf, file, line, false)
 }
@@ -678,7 +678,7 @@ func (l *loggingT) print(s severity, args ...interface{}) {
 
 func (l *loggingT) printDepth(s severity, depth int, args ...interface{}) {
 	buf, file, line := l.header(s, depth)
-	l.transCardNo(tprintf, buf, "", args...)
+	l.filter(tprintf, buf, "", args...)
 	// fmt.Fprint(buf, args...)
 	if buf.Bytes()[buf.Len()-1] != '\n' {
 		buf.WriteByte('\n')
@@ -688,7 +688,7 @@ func (l *loggingT) printDepth(s severity, depth int, args ...interface{}) {
 
 func (l *loggingT) printf(s severity, format string, args ...interface{}) {
 	buf, file, line := l.header(s, 0)
-	l.transCardNo(tprintln, buf, format, args...)
+	l.filter(tprintln, buf, format, args...)
 	// fmt.Fprintf(buf, format, args...)
 	if buf.Bytes()[buf.Len()-1] != '\n' {
 		buf.WriteByte('\n')
@@ -696,7 +696,7 @@ func (l *loggingT) printf(s severity, format string, args ...interface{}) {
 	l.output(s, buf, file, line, false)
 }
 
-func (l *loggingT) transCardNo(t printtype, buf io.Writer, format string, args ...interface{}) {
+func (l *loggingT) filter(t printtype, buf io.Writer, format string, args ...interface{}) {
 	if len(args) > 0 {
 		for i := range args {
 			val := reflect.ValueOf(args[i])
