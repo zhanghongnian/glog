@@ -80,20 +80,20 @@ import (
 	stdLog "log"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-	"reflect"
 )
 
 // severity identifies the sort of log: info, warning etc. It also implements
 // the flag.Value interface. The -stderrthreshold flag is of type severity and
 // should be modified only through the flag.Value interface. The values match
 // the corresponding constants in C++.
-type severity int32 // sync/atomic int32
+type severity int32  // sync/atomic int32
 type printtype int32 //
 // These constants identify the log levels in order of increasing severity.
 // A message written to a high-severity log file is also written to each
@@ -475,8 +475,8 @@ type loggingT struct {
 	//    if filterCard == true
 	// >>>> {Jone 17263862997372453 17777 836274********6746}
 	//    if filterIdentity == true
-	// >>>> {Jone 172638*******2453 17777 836274********6746}
-	filterCard bool
+	// >>>> {Jone 172638*******2453 17777 836274728264816746}
+	filterCard     bool
 	filterIdentity bool
 }
 
@@ -489,16 +489,16 @@ type buffer struct {
 
 var logging loggingT
 
-func (l *loggingT) SetFilter(card, identity bool)  {
+func (l *loggingT) SetFilter(card, identity bool) {
 	l.filterCard = card
 	l.filterIdentity = identity
 }
 
-func (l *loggingT) SetCardFilter(card bool)  {
+func (l *loggingT) SetCardFilter(card bool) {
 	l.filterCard = card
 }
 
-func (l *loggingT) SetIdentityFilter(identity bool)  {
+func (l *loggingT) SetIdentityFilter(identity bool) {
 	l.filterIdentity = identity
 }
 
