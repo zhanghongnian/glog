@@ -85,15 +85,26 @@ func setFlags() {
 	logging.toStderr = false
 }
 
+type A struct {
+	Name 			   string
+	CH_CARD_NO         string      `db:"CH_CARD_NO" filter:"card"`
+	CH_ID_CARD         string      `db:"CH_ID_CARD" filter:"identity"`
+}
+
 // Test that Info works as advertised.
 func TestInfo(t *testing.T) {
 	setFlags()
 	defer logging.swap(logging.newBuffers())
-	Info("test")
+	cardNo, ID := "123897326471231263", "9399992392939293929392"
+	a := A{"Aline", cardNo, ID}
+	Info(a)
 	if !contains(infoLog, "I", t) {
 		t.Errorf("Info has wrong character: %q", contents(infoLog))
 	}
-	if !contains(infoLog, "test", t) {
+	if !contains(infoLog, shrineCardNo(cardNo), t) {
+		t.Error("Info failed")
+	}
+	if !contains(infoLog, shrineIdentity(ID), t) {
 		t.Error("Info failed")
 	}
 }
