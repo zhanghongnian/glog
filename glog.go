@@ -80,20 +80,20 @@ import (
 	stdLog "log"
 	"os"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"reflect"
 )
 
 // severity identifies the sort of log: info, warning etc. It also implements
 // the flag.Value interface. The -stderrthreshold flag is of type severity and
 // should be modified only through the flag.Value interface. The values match
 // the corresponding constants in C++.
-type severity int32  // sync/atomic int32
+type severity int32 // sync/atomic int32
 type printtype int32 //
 // These constants identify the log levels in order of increasing severity.
 // A message written to a high-severity log file is also written to each
@@ -411,6 +411,9 @@ func init() {
 	// Default stderrThreshold is ERROR.
 	logging.stderrThreshold = errorLog
 
+	// Default filter card/salary/identity
+	logging.SetFilter(true, true)
+
 	logging.setVState(0, nil, false)
 	go logging.flushDaemon()
 }
@@ -458,6 +461,23 @@ type loggingT struct {
 	// safely using atomic.LoadInt32.
 	vmodule   moduleSpec // The state of the -vmodule flag.
 	verbosity Level      // V logging level, the value of the -v flag/
+	// usage:
+	// type User struct {
+	//     Name     string
+	//     IDCard   string		`"filter":"identity"`
+	//     Salary   int
+	//     BankCard string		`"filter:"card""`
+	// }
+	// var user = User{"Jone", "17263862997372453", 17777, "836274728264816746"}
+	// glog.Infoln(user)
+	//
+	// Output:
+	//    if filterCard == true
+	// >>>> {Jone 17263862997372453 17777 836274********6746}
+	//    if filterIdentity == true
+	// >>>> {Jone 172638*******2453 17777 836274********6746}
+	filterCard bool
+	filterIdentity bool
 }
 
 // buffer holds a byte Buffer for reuse. The zero value is ready for use.
@@ -468,6 +488,19 @@ type buffer struct {
 }
 
 var logging loggingT
+
+func (l *loggingT) SetFilter(card, identity bool)  {
+	l.filterCard = card
+	l.filterIdentity = identity
+}
+
+func (l *loggingT) SetCardFilter(card bool)  {
+	l.filterCard = card
+}
+
+func (l *loggingT) SetIdentityFilter(identity bool)  {
+	l.filterIdentity = identity
+}
 
 // setVState sets a consistent state for V logging.
 // l.mu is held.
@@ -667,41 +700,59 @@ func (l *loggingT) transCardNo(t printtype, buf io.Writer, format string, args .
 	if len(args) > 0 {
 		for i := range args {
 			val := reflect.ValueOf(args[i])
-			if val.Type().Kind() == reflect.Struct {
-				if val.FieldByName("CardNo").IsValid() ||
-					val.FieldByName("OwnCardNo").IsValid() ||
-					val.FieldByName("CH_CARD_NO").IsValid() ||
-					val.FieldByName("CH_JD_CARD_NO").IsValid() ||
-					val.FieldByName("CH_BANK_CARD_NO").IsValid() ||
-					val.FieldByName("CH_OWN_CARD_NO").IsValid() {
-					struct2Map := make(map[string]interface{}, val.NumField())
-					for i := 0; i < val.NumField(); i++ {
-						if val.Type().Field(i).Name != "CardNo" &&
-							val.Type().Field(i).Name != "OwnCardNo" &&
-							val.Type().Field(i).Name != "CH_CARD_NO" &&
-							val.Type().Field(i).Name != "CH_JD_CARD_NO" &&
-							val.Type().Field(i).Name != "CH_BANK_CARD_NO" &&
-							val.Type().Field(i).Name != "CH_OWN_CARD_NO" {
-							struct2Map[val.Type().Field(i).Name] = val.Field(i).Interface()
+			kind := val.Type().Kind()
+			if kind == reflect.Struct {
+				struct2Map := make(map[string]interface{}, val.NumField())
+				for i := 0; i < val.NumField(); i++ {
+					tag := val.Type().Field(i).Tag.Get("filter")
+					str, ok := val.Field(i).Interface().(string)
+					switch tag {
+					case "card":
+						if ok && l.filterCard {
+							struct2Map[val.Type().Field(i).Name] = shrineCardNo(str)
 						} else {
-							str, ok := val.Field(i).Interface().(string)
-							if ok {
-								struct2Map[val.Type().Field(i).Name] = shrineCardNo(str)
+							struct2Map[val.Type().Field(i).Name] = val.Field(i).Interface()
+						}
+					case "identity":
+						if ok && l.filterIdentity {
+							struct2Map[val.Type().Field(i).Name] = shrineIdentity(str)
+						} else {
+							struct2Map[val.Type().Field(i).Name] = val.Field(i).Interface()
+						}
+					default:
+						struct2Map[val.Type().Field(i).Name] = val.Field(i).Interface()
+					}
+				}
+				args[i] = struct2Map
+			} else if kind == reflect.Ptr {
+				val = val.Elem()
+				kind = val.Type().Kind()
+				if kind == reflect.Struct {
+					for i := 0; i < val.NumField(); i++ {
+						tag := val.Type().Field(i).Tag.Get("filter")
+						str, ok := val.Field(i).Interface().(string)
+						switch tag {
+						case "card":
+							if ok && l.filterCard {
+								val.Field(i).SetString(shrineCardNo(str))
+							}
+						case "identity":
+							if ok && l.filterIdentity {
+								val.Field(i).SetString(shrineIdentity(str))
 							}
 						}
 					}
-					args[i] = struct2Map
 				}
 			}
-		}
 
-		switch t {
-		case tprint:
-			fmt.Fprint(buf, args...)
-		case tprintln:
-			fmt.Fprintln(buf, args...)
-		case tprintf:
-			fmt.Fprintf(buf, format, args...)
+			switch t {
+			case tprint:
+				fmt.Fprint(buf, args...)
+			case tprintln:
+				fmt.Fprintln(buf, args...)
+			case tprintf:
+				fmt.Fprintf(buf, format, args...)
+			}
 		}
 	}
 }
@@ -1231,7 +1282,7 @@ func Exitf(format string, args ...interface{}) {
 }
 
 func shrineCardNo(cardNo string) (shrineStr string) {
-	// 长度小于7位的不作处理
+	// 长度小于8位的不作处理
 	l := len(cardNo)
 	if l <= 7 {
 		shrineStr = cardNo
@@ -1244,6 +1295,23 @@ func shrineCardNo(cardNo string) (shrineStr string) {
 	}
 	// 10位以上的，前6位+后四位显示
 	shrineStr = strMask(cardNo, 6, l-10)
+	return
+}
+
+func shrineIdentity(id string) (shrineStr string) {
+	// 长度小于5位的不作处理
+	l := len(id)
+	if l <= 4 {
+		shrineStr = id
+		return
+	}
+	// 5 ～ 13, 前两位+后两位显示
+	if l <= 13 {
+		shrineStr = strMask(id, 2, l-4)
+		return
+	}
+	// 13位以上的，前3位+后4位显示
+	shrineStr = strMask(id, 3, l-7)
 	return
 }
 
