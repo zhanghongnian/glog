@@ -710,6 +710,7 @@ func (l *loggingT) filter(t printtype, buf io.Writer, format string, args ...int
 		for i := range args {
 			val := reflect.ValueOf(args[i])
 			kind := val.Type().Kind()
+			val = reflect.Indirect(val)
 			if kind == reflect.Struct {
 				struct2Map := make(map[string]interface{}, val.NumField())
 				for i := 0; i < val.NumField(); i++ {
@@ -733,25 +734,6 @@ func (l *loggingT) filter(t printtype, buf io.Writer, format string, args ...int
 					}
 				}
 				args[i] = struct2Map
-			} else if kind == reflect.Ptr {
-				val = val.Elem()
-				kind = val.Type().Kind()
-				if kind == reflect.Struct {
-					for i := 0; i < val.NumField(); i++ {
-						tag := val.Type().Field(i).Tag.Get("filter")
-						str, ok := val.Field(i).Interface().(string)
-						switch tag {
-						case "card":
-							if ok && l.filterCard {
-								val.Field(i).SetString(shrineCardNo(str))
-							}
-						case "identity":
-							if ok && l.filterIdentity {
-								val.Field(i).SetString(shrineIdentity(str))
-							}
-						}
-					}
-				}
 			}
 
 			switch t {
