@@ -412,7 +412,7 @@ func init() {
 	logging.stderrThreshold = errorLog
 
 	// Default filter card/salary/identity
-	logging.SetFilter(true, true)
+	logging.SetFilter(true, true, true)
 
 	logging.setVState(0, nil, false)
 	go logging.flushDaemon()
