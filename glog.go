@@ -709,8 +709,8 @@ func (l *loggingT) filter(t printtype, buf io.Writer, format string, args ...int
 	if len(args) > 0 {
 		for i := range args {
 			val := reflect.ValueOf(args[i])
-			kind := val.Type().Kind()
 			val = reflect.Indirect(val)
+			kind := val.Type().Kind()
 			if kind == reflect.Struct {
 				struct2Map := make(map[string]interface{}, val.NumField())
 				for i := 0; i < val.NumField(); i++ {
