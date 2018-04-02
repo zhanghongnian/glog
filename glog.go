@@ -478,6 +478,7 @@ type loggingT struct {
 	// >>>> {Jone 172638*******2453 17777 836274728264816746}
 	filterCard     bool
 	filterIdentity bool
+	filterPhone    bool
 }
 
 // buffer holds a byte Buffer for reuse. The zero value is ready for use.
@@ -489,9 +490,10 @@ type buffer struct {
 
 var logging loggingT
 
-func (l *loggingT) SetFilter(card, identity bool) {
+func (l *loggingT) SetFilter(card, identity, phone bool) {
 	l.filterCard = card
 	l.filterIdentity = identity
+	l.filterPhone = phone
 }
 
 func (l *loggingT) SetCardFilter(card bool) {
@@ -500,6 +502,10 @@ func (l *loggingT) SetCardFilter(card bool) {
 
 func (l *loggingT) SetIdentityFilter(identity bool) {
 	l.filterIdentity = identity
+}
+
+func (l *loggingT) SetPhoneFilter(phone bool) {
+	l.filterPhone = phone
 }
 
 // setVState sets a consistent state for V logging.
@@ -667,7 +673,7 @@ func (buf *buffer) someDigits(i, d int) int {
 
 func (l *loggingT) println(s severity, args ...interface{}) {
 	buf, file, line := l.header(s, 0)
-	if l.filterCard || l.filterIdentity {
+	if l.filterCard || l.filterIdentity || l.filterPhone {
 		l.filter(tprintln, buf, "", args...)
 	} else {
 		fmt.Fprintln(buf, args...)
@@ -681,7 +687,7 @@ func (l *loggingT) print(s severity, args ...interface{}) {
 
 func (l *loggingT) printDepth(s severity, depth int, args ...interface{}) {
 	buf, file, line := l.header(s, depth)
-	if l.filterCard || l.filterIdentity {
+	if l.filterCard || l.filterIdentity || l.filterPhone {
 		l.filter(tprintf, buf, "", args...)
 	} else {
 		fmt.Fprint(buf, args...)
@@ -694,7 +700,7 @@ func (l *loggingT) printDepth(s severity, depth int, args ...interface{}) {
 
 func (l *loggingT) printf(s severity, format string, args ...interface{}) {
 	buf, file, line := l.header(s, 0)
-	if l.filterCard || l.filterIdentity {
+	if l.filterCard || l.filterIdentity || l.filterPhone {
 		l.filter(tprintln, buf, format, args...)
 	} else {
 		fmt.Fprintf(buf, format, args...)
@@ -726,6 +732,12 @@ func (l *loggingT) filter(t printtype, buf io.Writer, format string, args ...int
 					case "identity":
 						if ok && l.filterIdentity {
 							struct2Map[val.Type().Field(i).Name] = shrineIdentity(str)
+						} else {
+							struct2Map[val.Type().Field(i).Name] = val.Field(i).Interface()
+						}
+					case "phone":
+						if ok && l.filterPhone {
+							struct2Map[val.Type().Field(i).Name] = ShrinePhoneNumber(str)
 						} else {
 							struct2Map[val.Type().Field(i).Name] = val.Field(i).Interface()
 						}
@@ -1273,24 +1285,43 @@ func Exitf(format string, args ...interface{}) {
 }
 
 func shrineCardNo(cardNo string) (shrineStr string) {
-	// 长度小于8位的不作处理
+	// 长度 [0,5] 的不作处理
 	l := len(cardNo)
-	if l <= 7 {
+	if l <= 5 {
 		shrineStr = cardNo
 		return
 	}
-	// 7 ～ 10, 前两位+后四位显示
-	if l <= 10 {
-		shrineStr = strMask(cardNo, 2, l-6)
+	// 长度 [6, 8] 前两位+后四位显示
+	if l <= 8 {
+		shrineStr = strMask(cardNo, 2, l-3)
 		return
 	}
-	// 10位以上的，前6位+后四位显示
+	// 长度 [9, 10] 前两位+后四位显示
+	if l <= 10 {
+		shrineStr = strMask(cardNo, 2, l-5)
+		return
+	}
+	// 长度 [11, 12] 前两位+后四位显示
+	if l <= 12 {
+		shrineStr = strMask(cardNo, 3, l-6)
+		return
+	}
+	// 长度 [13, 14] 前两位+后四位显示
+	if l <= 14 {
+		shrineStr = strMask(cardNo, 4, l-7)
+		return
+	}
+	// 长度 15 以上，前6位+后四位显示
 	shrineStr = strMask(cardNo, 6, l-10)
 	return
 }
 
 func shrineIdentity(id string) string {
 	return strMask(id, 4, 10)
+}
+
+func ShrinePhoneNumber(phone string) (shrineStr string) {
+	return strMask(phone, 3, 4)
 }
 
 func strMask(number string, offset int, bit int) (out string) {
