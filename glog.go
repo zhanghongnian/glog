@@ -688,7 +688,7 @@ func (l *loggingT) print(s severity, args ...interface{}) {
 func (l *loggingT) printDepth(s severity, depth int, args ...interface{}) {
 	buf, file, line := l.header(s, depth)
 	if l.filterCard || l.filterIdentity || l.filterPhone {
-		l.filter(tprintf, buf, "", args...)
+		l.filter(tprint, buf, "", args...)
 	} else {
 		fmt.Fprint(buf, args...)
 	}
@@ -701,7 +701,7 @@ func (l *loggingT) printDepth(s severity, depth int, args ...interface{}) {
 func (l *loggingT) printf(s severity, format string, args ...interface{}) {
 	buf, file, line := l.header(s, 0)
 	if l.filterCard || l.filterIdentity || l.filterPhone {
-		l.filter(tprintln, buf, format, args...)
+		l.filter(tprintf, buf, format, args...)
 	} else {
 		fmt.Fprintf(buf, format, args...)
 	}
