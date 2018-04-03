@@ -715,48 +715,76 @@ func (l *loggingT) filter(t printtype, buf io.Writer, format string, args ...int
 	if len(args) > 0 {
 		for i := range args {
 			val := reflect.ValueOf(args[i])
-			val = reflect.Indirect(val)
+			// val = reflect.Indirect(val)
 			kind := val.Type().Kind()
 			if kind == reflect.Struct {
 				struct2Map := make(map[string]interface{}, val.NumField())
 				for i := 0; i < val.NumField(); i++ {
-					tag := val.Type().Field(i).Tag.Get("filter")
-					str, ok := val.Field(i).Interface().(string)
+					field := val.Type().Field(i)
+					tag := field.Tag.Get("filter")
+					tempVal := val.Field(i)
+					str, ok := tempVal.Interface().(string)
 					switch tag {
 					case "card":
 						if ok && l.filterCard {
-							struct2Map[val.Type().Field(i).Name] = shrineCardNo(str)
+							struct2Map[field.Name] = shrineCardNo(str)
 						} else {
-							struct2Map[val.Type().Field(i).Name] = val.Field(i).Interface()
+							struct2Map[field.Name] = tempVal.Interface()
 						}
 					case "identity":
 						if ok && l.filterIdentity {
-							struct2Map[val.Type().Field(i).Name] = shrineIdentity(str)
+							struct2Map[field.Name] = shrineIdentity(str)
 						} else {
-							struct2Map[val.Type().Field(i).Name] = val.Field(i).Interface()
+							struct2Map[field.Name] = tempVal.Interface()
 						}
 					case "phone":
 						if ok && l.filterPhone {
-							struct2Map[val.Type().Field(i).Name] = ShrinePhoneNumber(str)
+							struct2Map[field.Name] = ShrinePhoneNumber(str)
 						} else {
-							struct2Map[val.Type().Field(i).Name] = val.Field(i).Interface()
+							struct2Map[field.Name] = tempVal.Interface()
 						}
 					default:
-						struct2Map[val.Type().Field(i).Name] = val.Field(i).Interface()
+						struct2Map[field.Name] = tempVal.Interface()
 					}
 				}
 				args[i] = struct2Map
-			}
-
-			switch t {
-			case tprint:
-				fmt.Fprint(buf, args...)
-			case tprintln:
-				fmt.Fprintln(buf, args...)
-			case tprintf:
-				fmt.Fprintf(buf, format, args...)
+			} else if kind == reflect.Ptr {
+				val = val.Elem()
+				kind = val.Type().Kind()
+				if kind == reflect.Struct {
+					for i := 0; i < val.NumField(); i++ {
+						tag := val.Type().Field(i).Tag.Get("filter")
+						tempVal := val.Field(i)
+						if tempVal.Kind() == reflect.String {
+							str, ok := tempVal.Interface().(string)
+							switch tag {
+							case "card":
+								if ok && l.filterCard {
+									tempVal.SetString(shrineCardNo(str))
+								}
+							case "identity":
+								if ok && l.filterIdentity {
+									tempVal.SetString(shrineIdentity(str))
+								}
+							case "phone":
+								if ok && l.filterPhone {
+									tempVal.SetString(ShrinePhoneNumber(str))
+								}
+							}
+						}
+					}
+				}
 			}
 		}
+	}
+
+	switch t {
+	case tprint:
+		fmt.Fprint(buf, args...)
+	case tprintln:
+		fmt.Fprintln(buf, args...)
+	case tprintf:
+		fmt.Fprintf(buf, format, args...)
 	}
 }
 
