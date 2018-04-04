@@ -711,69 +711,43 @@ func (l *loggingT) printf(s severity, format string, args ...interface{}) {
 	l.output(s, buf, file, line, false)
 }
 
+// filter - if type is struct, it's tag is card or identity or phone, mask this.
+// handle if type is []*Type, *Type, Struct in log struct.
 func (l *loggingT) filter(t printtype, buf io.Writer, format string, args ...interface{}) {
 	if len(args) > 0 {
 		for i := range args {
 			val := reflect.ValueOf(args[i])
-			// val = reflect.Indirect(val)
+			val = reflect.Indirect(val)
 			kind := val.Type().Kind()
 			if kind == reflect.Struct {
 				struct2Map := make(map[string]interface{}, val.NumField())
 				for i := 0; i < val.NumField(); i++ {
+					outerVal := val.Field(i)
+					outerKind := outerVal.Kind()
 					field := val.Type().Field(i)
-					tag := field.Tag.Get("filter")
-					tempVal := val.Field(i)
-					str, ok := tempVal.Interface().(string)
-					switch tag {
-					case "card":
-						if ok && l.filterCard {
-							struct2Map[field.Name] = shrineCardNo(str)
-						} else {
-							struct2Map[field.Name] = tempVal.Interface()
+					if outerKind == reflect.Slice {
+						sliceMap := make([]map[string]interface{}, outerVal.Len())
+						for idx := 0; idx < outerVal.Len(); idx++ {
+							innerVal := reflect.Indirect(outerVal.Index(idx))
+							if innerVal.Kind() == reflect.Struct {
+								innerMap := make(map[string]interface{}, innerVal.NumField())
+								l.struct2Map(&innerVal, innerMap)
+								sliceMap[idx] = innerMap
+							}
 						}
-					case "identity":
-						if ok && l.filterIdentity {
-							struct2Map[field.Name] = shrineIdentity(str)
-						} else {
-							struct2Map[field.Name] = tempVal.Interface()
+						struct2Map[field.Name] = sliceMap
+					} else if outerKind == reflect.Ptr || outerKind == reflect.Struct {
+						innerVal := reflect.Indirect(outerVal)
+						if innerVal.Kind() == reflect.Struct {
+							innerMap := make(map[string]interface{}, innerVal.NumField())
+							l.struct2Map(&innerVal, innerMap)
+							struct2Map[field.Name] = innerMap
 						}
-					case "phone":
-						if ok && l.filterPhone {
-							struct2Map[field.Name] = ShrinePhoneNumber(str)
-						} else {
-							struct2Map[field.Name] = tempVal.Interface()
-						}
-					default:
-						struct2Map[field.Name] = tempVal.Interface()
+					} else {
+						l.switchTag(&outerVal, &field, struct2Map, i)
 					}
 				}
 				args[i] = struct2Map
-			} else if kind == reflect.Ptr {
-				val = val.Elem()
-				kind = val.Type().Kind()
-				if kind == reflect.Struct {
-					for i := 0; i < val.NumField(); i++ {
-						tag := val.Type().Field(i).Tag.Get("filter")
-						tempVal := val.Field(i)
-						if tempVal.Kind() == reflect.String {
-							str, ok := tempVal.Interface().(string)
-							switch tag {
-							case "card":
-								if ok && l.filterCard {
-									tempVal.SetString(shrineCardNo(str))
-								}
-							case "identity":
-								if ok && l.filterIdentity {
-									tempVal.SetString(shrineIdentity(str))
-								}
-							case "phone":
-								if ok && l.filterPhone {
-									tempVal.SetString(ShrinePhoneNumber(str))
-								}
-							}
-						}
-					}
-				}
 			}
 		}
 	}
@@ -785,6 +759,43 @@ func (l *loggingT) filter(t printtype, buf io.Writer, format string, args ...int
 		fmt.Fprintln(buf, args...)
 	case tprintf:
 		fmt.Fprintf(buf, format, args...)
+	}
+}
+
+func (l *loggingT) struct2Map(val *reflect.Value, container map[string]interface{}) {
+	for idx := 0; idx < val.NumField(); idx++ {
+		innerVal := val.Field(idx)
+		field := val.Type().Field(idx)
+		l.switchTag(&innerVal, &field, container, idx)
+	}
+}
+
+func (l *loggingT) switchTag(val *reflect.Value, field *reflect.StructField, container map[string]interface{}, index int) {
+	if val.CanInterface() && val.IsValid() {
+		tag := field.Tag.Get("filter")
+		str, ok := val.Interface().(string)
+		switch tag {
+		case "card":
+			if ok && l.filterCard {
+				container[field.Name] = shrineCardNo(str)
+			} else {
+				container[field.Name] = val.Interface()
+			}
+		case "identity":
+			if ok && l.filterIdentity {
+				container[field.Name] = shrineIdentity(str)
+			} else {
+				container[field.Name] = val.Interface()
+			}
+		case "phone":
+			if ok && l.filterPhone {
+				container[field.Name] = ShrinePhoneNumber(str)
+			} else {
+				container[field.Name] = val.Interface()
+			}
+		default:
+			container[field.Name] = val.Interface()
+		}
 	}
 }
 
