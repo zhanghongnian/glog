@@ -717,37 +717,53 @@ func (l *loggingT) filter(t printtype, buf io.Writer, format string, args ...int
 	if len(args) > 0 {
 		for i := range args {
 			val := reflect.ValueOf(args[i])
-			val = reflect.Indirect(val)
-			kind := val.Type().Kind()
-			if kind == reflect.Struct {
-				struct2Map := make(map[string]interface{}, val.NumField())
-				for i := 0; i < val.NumField(); i++ {
-					outerVal := val.Field(i)
-					outerKind := outerVal.Kind()
-					field := val.Type().Field(i)
-					if outerKind == reflect.Slice {
-						sliceMap := make([]map[string]interface{}, outerVal.Len())
-						for idx := 0; idx < outerVal.Len(); idx++ {
-							innerVal := reflect.Indirect(outerVal.Index(idx))
-							if innerVal.Kind() == reflect.Struct {
-								innerMap := make(map[string]interface{}, innerVal.NumField())
-								l.struct2Map(&innerVal, innerMap)
-								sliceMap[idx] = innerMap
+			if val.IsValid() {
+				val = reflect.Indirect(val)
+				kind := val.Kind()
+				if kind == reflect.Struct {
+					struct2Map := make(map[string]interface{}, val.NumField())
+					for i := 0; i < val.NumField(); i++ {
+						outerVal := val.Field(i)
+						if outerVal.IsValid() {
+							outerKind := outerVal.Kind()
+							field := val.Type().Field(i)
+							if outerKind == reflect.Slice {
+								innerSlice := make([]interface{}, outerVal.Len())
+								for idx := 0; idx < outerVal.Len(); idx++ {
+									innerVal := reflect.Indirect(outerVal.Index(idx))
+									if innerVal.IsValid() {
+										if innerVal.Kind() == reflect.Struct {
+											innerMap := make(map[string]interface{}, innerVal.NumField())
+											l.struct2Map(&innerVal, innerMap)
+											innerSlice[idx] = innerMap
+										} else {
+											if innerVal.CanInterface() {
+												innerSlice[idx] = innerVal.Interface()
+											}
+										}
+									}
+								}
+								struct2Map[field.Name] = innerSlice
+							} else if outerKind == reflect.Ptr || outerKind == reflect.Struct {
+								innerVal := reflect.Indirect(outerVal)
+								if innerVal.IsValid() {
+									if innerVal.Kind() == reflect.Struct {
+										innerMap := make(map[string]interface{}, innerVal.NumField())
+										l.struct2Map(&innerVal, innerMap)
+										struct2Map[field.Name] = innerMap
+									} else {
+										if innerVal.CanInterface() {
+											struct2Map[field.Name] = innerVal.Interface()
+										}
+									}
+								}
+							} else {
+								l.switchTag(&outerVal, &field, struct2Map, i)
 							}
 						}
-						struct2Map[field.Name] = sliceMap
-					} else if outerKind == reflect.Ptr || outerKind == reflect.Struct {
-						innerVal := reflect.Indirect(outerVal)
-						if innerVal.Kind() == reflect.Struct {
-							innerMap := make(map[string]interface{}, innerVal.NumField())
-							l.struct2Map(&innerVal, innerMap)
-							struct2Map[field.Name] = innerMap
-						}
-					} else {
-						l.switchTag(&outerVal, &field, struct2Map, i)
 					}
+					args[i] = struct2Map
 				}
-				args[i] = struct2Map
 			}
 		}
 	}
