@@ -716,55 +716,7 @@ func (l *loggingT) printf(s severity, format string, args ...interface{}) {
 func (l *loggingT) filter(t printtype, buf io.Writer, format string, args ...interface{}) {
 	if len(args) > 0 {
 		for i := range args {
-			val := reflect.ValueOf(args[i])
-			if val.IsValid() {
-				val = reflect.Indirect(val)
-				kind := val.Kind()
-				if kind == reflect.Struct {
-					struct2Map := make(map[string]interface{}, val.NumField())
-					for i := 0; i < val.NumField(); i++ {
-						outerVal := val.Field(i)
-						if outerVal.IsValid() {
-							outerKind := outerVal.Kind()
-							field := val.Type().Field(i)
-							if outerKind == reflect.Slice {
-								innerSlice := make([]interface{}, outerVal.Len())
-								for idx := 0; idx < outerVal.Len(); idx++ {
-									innerVal := reflect.Indirect(outerVal.Index(idx))
-									if innerVal.IsValid() {
-										if innerVal.Kind() == reflect.Struct {
-											innerMap := make(map[string]interface{}, innerVal.NumField())
-											l.struct2Map(&innerVal, innerMap)
-											innerSlice[idx] = innerMap
-										} else {
-											if innerVal.CanInterface() {
-												innerSlice[idx] = innerVal.Interface()
-											}
-										}
-									}
-								}
-								struct2Map[field.Name] = innerSlice
-							} else if outerKind == reflect.Ptr || outerKind == reflect.Struct {
-								innerVal := reflect.Indirect(outerVal)
-								if innerVal.IsValid() {
-									if innerVal.Kind() == reflect.Struct {
-										innerMap := make(map[string]interface{}, innerVal.NumField())
-										l.struct2Map(&innerVal, innerMap)
-										struct2Map[field.Name] = innerMap
-									} else {
-										if innerVal.CanInterface() {
-											struct2Map[field.Name] = innerVal.Interface()
-										}
-									}
-								}
-							} else {
-								l.switchTag(&outerVal, &field, struct2Map, i)
-							}
-						}
-					}
-					args[i] = struct2Map
-				}
-			}
+			args[i] = l.Transform(args[i])
 		}
 	}
 
@@ -775,14 +727,6 @@ func (l *loggingT) filter(t printtype, buf io.Writer, format string, args ...int
 		fmt.Fprintln(buf, args...)
 	case tprintf:
 		fmt.Fprintf(buf, format, args...)
-	}
-}
-
-func (l *loggingT) struct2Map(val *reflect.Value, container map[string]interface{}) {
-	for idx := 0; idx < val.NumField(); idx++ {
-		innerVal := val.Field(idx)
-		field := val.Type().Field(idx)
-		l.switchTag(&innerVal, &field, container, idx)
 	}
 }
 
@@ -813,6 +757,96 @@ func (l *loggingT) switchTag(val *reflect.Value, field *reflect.StructField, con
 			container[field.Name] = val.Interface()
 		}
 	}
+}
+
+func (l *loggingT) Transform(v interface{}) interface{} {
+	val := reflect.Indirect(reflect.ValueOf(v))
+	if val.IsValid() && val.CanInterface() {
+		switch val.Kind() {
+		case reflect.Struct:
+			ret := make(map[string]interface{}, val.NumField())
+			for i := 0; i < val.NumField(); i++ {
+				outerVal := reflect.Indirect(val.Field(i))
+				if outerVal.IsValid() && outerVal.CanInterface() {
+					field := val.Type().Field(i)
+					switch outerVal.Kind() {
+					case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Interface:
+						ret[field.Name] = l.Transform(outerVal.Interface())
+					case reflect.String:
+						l.switchTag(&outerVal, &field, ret, i)
+					default:
+						ret[field.Name] = outerVal.Interface()
+					}
+				}
+			}
+			return ret
+		case reflect.Map:
+			ret := make(map[string]interface{}, val.Len())
+			keys := val.MapKeys()
+			for _, key := range keys {
+				if key.CanInterface() && key.IsValid() {
+					if keyStr, ok := key.Interface().(string); ok {
+						mapVal := reflect.Indirect(val.MapIndex(key))
+						if mapVal.IsValid() && mapVal.CanInterface() {
+							switch mapVal.Kind() {
+							case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Interface:
+								ret[keyStr] = l.Transform(mapVal.Interface())
+							case reflect.String:
+								haveCard := strings.Contains(keyStr, "card") || strings.Contains(keyStr, "Card") || strings.Contains(keyStr, "CARD")
+								haveId := strings.Contains(keyStr, "id") || strings.Contains(keyStr, "Id") || strings.Contains(keyStr, "ID")
+								havePhone := strings.Contains(keyStr, "phone") || strings.Contains(keyStr, "Phone") || strings.Contains(keyStr, "PHONE") ||
+									strings.Contains(keyStr, "mobile") || strings.Contains(keyStr, "Mobile")
+
+								switch {
+								case haveCard && !haveId:
+									if l.filterCard {
+										ret[keyStr] = shrineCardNo(mapVal.Interface().(string))
+									} else {
+										ret[keyStr] = mapVal.Interface()
+									}
+								case haveCard && haveId:
+									if l.filterIdentity {
+										ret[keyStr] = shrineIdentity(mapVal.Interface().(string))
+									} else {
+										ret[keyStr] = mapVal.Interface()
+									}
+								case havePhone:
+									if l.filterPhone {
+										ret[keyStr] = ShrinePhoneNumber(mapVal.Interface().(string))
+									} else {
+										ret[keyStr] = mapVal.Interface()
+									}
+								}
+							default:
+								ret[keyStr] = mapVal.Interface()
+							}
+						}
+					}
+				}
+			}
+			return ret
+		case reflect.Array, reflect.Slice:
+			ret := make([]interface{}, val.Len())
+			for i := 0; i < val.Len(); i++ {
+				outerVal := reflect.Indirect(val.Index(i))
+				if outerVal.IsValid() && outerVal.CanInterface() {
+					switch outerVal.Kind() {
+					case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Interface:
+						ret[i] = l.Transform(outerVal.Interface())
+					default:
+						ret[i] = outerVal.Interface()
+					}
+				}
+			}
+			return ret
+		case reflect.Interface:
+			tempVal := val.Interface()
+			return l.Transform(tempVal)
+		default:
+			return v
+		}
+	}
+	return v
 }
 
 // printWithFileLine behaves like print but uses the provided file and line number.  If
