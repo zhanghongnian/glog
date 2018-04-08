@@ -81,6 +81,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -108,6 +109,14 @@ const (
 	tprint printtype = iota
 	tprintln
 	tprintf
+)
+
+var (
+	Is2088BeginRe          = regexp.MustCompile(`^(2088)+[0-9]*$`)
+	IsPhoneNumberRe        = regexp.MustCompile(`^(1[3-9][0-9]\d{8})$`)
+	IsEmailRe              = regexp.MustCompile(`^([a-z_A-Z.0-9-])+@([a-zA-Z0-9_-])+\.([a-zA-Z0-9_-])+`)
+	IsPhoneNumberCountryRe = regexp.MustCompile(`^\d{1,}\-\d{1,}$`)
+	IsNumber               = regexp.MustCompile(`^[0-9]*$`)
 )
 
 const severityChar = "IWEF"
@@ -737,7 +746,7 @@ func (l *loggingT) switchTag(val *reflect.Value, field *reflect.StructField, con
 		switch tag {
 		case "card":
 			if ok && l.filterCard {
-				container[field.Name] = shrineCardNo(str)
+				container[field.Name] = ShrineAlipayAccountNumber(str)
 			} else {
 				container[field.Name] = val.Interface()
 			}
@@ -793,14 +802,15 @@ func (l *loggingT) Transform(v interface{}) interface{} {
 								ret[keyStr] = l.Transform(mapVal.Interface())
 							case reflect.String:
 								haveCard := strings.Contains(keyStr, "card") || strings.Contains(keyStr, "Card") || strings.Contains(keyStr, "CARD")
+								haveAcct := strings.Contains(keyStr, "acct_id")
 								haveId := strings.Contains(keyStr, "id") || strings.Contains(keyStr, "Id") || strings.Contains(keyStr, "ID")
 								havePhone := strings.Contains(keyStr, "phone") || strings.Contains(keyStr, "Phone") || strings.Contains(keyStr, "PHONE") ||
 									strings.Contains(keyStr, "mobile") || strings.Contains(keyStr, "Mobile")
 
 								switch {
-								case haveCard && !haveId:
+								case (haveCard && !haveId) || haveAcct:
 									if l.filterCard {
-										ret[keyStr] = shrineCardNo(mapVal.Interface().(string))
+										ret[keyStr] = ShrineAlipayAccountNumber(mapVal.Interface().(string))
 									} else {
 										ret[keyStr] = mapVal.Interface()
 									}
@@ -1413,6 +1423,52 @@ func ShrinePhoneNumber(phone string) (shrineStr string) {
 	return strMask(phone, 3, 4)
 }
 
+func ShrineAlipayAccountNumber(alipayAccountNumber string) (shrineStr string) {
+	//支付宝账号是11位手机号
+	if isPhoneNumber := IsValidPhoneNumber(alipayAccountNumber); isPhoneNumber {
+		shrineStr = ShrinePhoneNumber(alipayAccountNumber)
+		return
+	}
+	//判断是否是邮箱号
+	if isEmail := IsEmailRe.MatchString(alipayAccountNumber); isEmail {
+		shrineStr = ShrineEmail(alipayAccountNumber)
+		return
+	}
+	//其余类型
+	shrineStr = shrineCardNo(alipayAccountNumber)
+	return
+}
+
+func ShrineEmail(email string) (shrineStr string) {
+	endPos := len(email)
+	startPos := strings.Index(email, "@")
+	headStr, err := SubString(email, 0, startPos)
+	if err != nil {
+		Warningf("SubString ShrineEmail headStr faild, email=%s error=%s", email, err)
+		shrineStr = ""
+		return
+	}
+	if len(headStr) > 3 {
+		headStr, err = SubString(headStr, 0, 3)
+		if err != nil {
+			Warningf("SubString ShrineEmail headStr faild, phoneNumber=%s headStr=%s error=%s", email, headStr, err)
+			shrineStr = ""
+			return
+		}
+		headStr += "***"
+	}
+
+	tailStr, err := SubString(email, startPos, endPos)
+	if err != nil {
+		Errorf("SubString ShrineEmail tailStr faild, phoneNumber=%s error=%s", email, err)
+		shrineStr = ""
+		return
+	}
+
+	shrineStr = headStr + tailStr
+	return
+}
+
 func strMask(number string, offset int, bit int) (out string) {
 	b := []rune(number)
 	l := len(b)
@@ -1426,5 +1482,41 @@ func strMask(number string, offset int, bit int) (out string) {
 			out = string(b[0:offset]) + strings.Repeat("*", l-offset)
 		}
 	}
+	return
+}
+
+//判断手机号码
+func IsValidPhoneNumber(phoneNumber string) bool {
+	var ok bool = true
+	if strings.Contains(phoneNumber, "-") {
+		if isPhoneNumberCountry := IsPhoneNumberCountryRe.MatchString(phoneNumber); isPhoneNumberCountry {
+			return ok
+		}
+
+	} else {
+		if isPhoneNumber := IsPhoneNumberRe.MatchString(phoneNumber); isPhoneNumber {
+			return ok
+		}
+	}
+	return !ok
+}
+
+//截取字符串 start 起点下标 end 终点下标(不包括)
+func SubString(str string, start int, end int) (subString string, err error) {
+	if end < start {
+		err = errors.New("参数不合法")
+		return
+	}
+	rs := []rune(str)
+	length := len(rs)
+	if start < 0 || start > length {
+		err = errors.New("参数不合法")
+		return
+	}
+	if end < 0 || end > length {
+		err = errors.New("参数不合法")
+		return
+	}
+	subString = string(rs[start:end])
 	return
 }
