@@ -81,13 +81,13 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-	"regexp"
 )
 
 // severity identifies the sort of log: info, warning etc. It also implements
@@ -742,23 +742,36 @@ func (l *loggingT) filter(t printtype, buf io.Writer, format string, args ...int
 func (l *loggingT) switchTag(val *reflect.Value, field *reflect.StructField, container map[string]interface{}, index int) {
 	if val.CanInterface() && val.IsValid() {
 		tag := field.Tag.Get("filter")
+		name := field.Name
 		str, ok := val.Interface().(string)
-		switch tag {
-		case "card":
+		switch {
+		case tag == "card":
 			if ok && l.filterCard {
 				container[field.Name] = ShrineAlipayAccountNumber(str)
 			} else {
 				container[field.Name] = val.Interface()
 			}
-		case "identity":
+		case tag == "identity":
 			if ok && l.filterIdentity {
-				container[field.Name] = shrineIdentity(str)
+				container[field.Name] = ShrineIdentity(str)
 			} else {
 				container[field.Name] = val.Interface()
 			}
-		case "phone":
+		case tag == "phone":
 			if ok && l.filterPhone {
 				container[field.Name] = ShrinePhoneNumber(str)
+			} else {
+				container[field.Name] = val.Interface()
+			}
+		case name == "RawQuery", name == "RequestURI":
+			if ok {
+				container[field.Name] = l.shrineRequestField(str)
+			} else {
+				container[field.Name] = val.Interface()
+			}
+		case name == "BankNameNumber":
+			if ok && l.filterCard {
+				container[field.Name] = ShrineBankNameNumber(str)
 			} else {
 				container[field.Name] = val.Interface()
 			}
@@ -837,7 +850,7 @@ func (l *loggingT) transform(v interface{}) interface{} {
 										}
 									case haveIdCard:
 										if l.filterIdentity {
-											ret[keyStr] = shrineIdentity(mapVal.Interface().(string))
+											ret[keyStr] = ShrineIdentity(mapVal.Interface().(string))
 										} else {
 											ret[keyStr] = mapVal.Interface()
 										}
@@ -1412,7 +1425,30 @@ func Exitf(format string, args ...interface{}) {
 	logging.printf(fatalLog, format, args...)
 }
 
-func shrineCardNo(cardNo string) (shrineStr string) {
+func (l *loggingT) shrineRequestField(str string) (shrineStr string) {
+	strs := strings.Split(str, "&")
+	for index := range strs {
+		tmpStrs := strings.Split(strs[index], "=")
+		switch tmpStrs[0] {
+		case "id_card":
+			if l.filterIdentity {
+				strs[index] = fmt.Sprintf("id_card=%s", ShrineIdentity(tmpStrs[1]))
+			}
+		case "card_no":
+			if l.filterCard {
+				strs[index] = fmt.Sprintf("card_no=%s", ShrineCardNo(tmpStrs[1]))
+			}
+		case "mobile":
+			if l.filterPhone {
+				strs[index] = fmt.Sprintf("mobile=%s", ShrinePhoneNumber(tmpStrs[1]))
+			}
+		}
+	}
+	shrineStr = strings.Join(strs, "&")
+	return
+}
+
+func ShrineCardNo(cardNo string) (shrineStr string) {
 	// 长度 [0,5] 的不作处理
 	l := len(cardNo)
 	if l <= 5 {
@@ -1444,7 +1480,7 @@ func shrineCardNo(cardNo string) (shrineStr string) {
 	return
 }
 
-func shrineIdentity(id string) string {
+func ShrineIdentity(id string) string {
 	return strMask(id, 4, 10)
 }
 
@@ -1464,10 +1500,9 @@ func ShrineAlipayAccountNumber(alipayAccountNumber string) (shrineStr string) {
 		return
 	}
 	//其余类型
-	shrineStr = shrineCardNo(alipayAccountNumber)
+	shrineStr = ShrineCardNo(alipayAccountNumber)
 	return
 }
-
 
 func ShrineEmail(email string) (shrineStr string) {
 	endPos := len(email)
@@ -1496,6 +1531,23 @@ func ShrineEmail(email string) (shrineStr string) {
 	}
 
 	shrineStr = headStr + tailStr
+	return
+}
+
+func ShrineBankNameNumber(str string) (shrineStr string) {
+	switch {
+	case strings.Contains(str, ","):
+		tmpStrs := strings.Split(str, ",")
+		tmpStrs[1] = ShrineCardNo(tmpStrs[1])
+		shrineStr = strings.Join(tmpStrs, ",")
+	case strings.Contains(str, "，"):
+		tmpStrs := strings.Split(str, "，")
+		tmpStrs[1] = ShrineCardNo(tmpStrs[1])
+		shrineStr = strings.Join(tmpStrs, "，")
+	default:
+		shrineStr = str
+	}
+
 	return
 }
 
