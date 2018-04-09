@@ -81,13 +81,13 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"regexp"
 )
 
 // severity identifies the sort of log: info, warning etc. It also implements
@@ -725,7 +725,7 @@ func (l *loggingT) printf(s severity, format string, args ...interface{}) {
 func (l *loggingT) filter(t printtype, buf io.Writer, format string, args ...interface{}) {
 	if len(args) > 0 {
 		for i := range args {
-			args[i] = l.Transform(args[i])
+			args[i] = l.transform(args[i])
 		}
 	}
 
@@ -768,23 +768,37 @@ func (l *loggingT) switchTag(val *reflect.Value, field *reflect.StructField, con
 	}
 }
 
-func (l *loggingT) Transform(v interface{}) interface{} {
+// transform - Filtering the bank card number, the id card number
+// and the mobile phone number through the reflection structure tag
+// and slice key
+func (l *loggingT) transform(v interface{}) interface{} {
+	// returns the value that v points to.
 	val := reflect.Indirect(reflect.ValueOf(v))
+	// Avoid panic
 	if val.IsValid() && val.CanInterface() {
 		switch val.Kind() {
 		case reflect.Struct:
+			// ret used to temporarily store information to be printed
 			ret := make(map[string]interface{}, val.NumField())
 			for i := 0; i < val.NumField(); i++ {
 				outerVal := reflect.Indirect(val.Field(i))
+
 				if outerVal.IsValid() && outerVal.CanInterface() {
 					field := val.Type().Field(i)
-					switch outerVal.Kind() {
-					case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Interface:
-						ret[field.Name] = l.Transform(outerVal.Interface())
-					case reflect.String:
-						l.switchTag(&outerVal, &field, ret, i)
-					default:
-						ret[field.Name] = outerVal.Interface()
+
+					if outerVal.Kind() == reflect.Interface {
+						outerVal = reflect.Indirect(reflect.ValueOf(outerVal.Interface()))
+					}
+
+					if outerVal.IsValid() && outerVal.CanInterface() {
+						switch outerVal.Kind() {
+						case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Interface:
+							ret[field.Name] = l.transform(outerVal.Interface())
+						case reflect.String:
+							l.switchTag(&outerVal, &field, ret, i)
+						default:
+							ret[field.Name] = outerVal.Interface()
+						}
 					}
 				}
 			}
@@ -796,39 +810,49 @@ func (l *loggingT) Transform(v interface{}) interface{} {
 				if key.CanInterface() && key.IsValid() {
 					if keyStr, ok := key.Interface().(string); ok {
 						mapVal := reflect.Indirect(val.MapIndex(key))
-						if mapVal.IsValid() && mapVal.CanInterface() {
-							switch mapVal.Kind() {
-							case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Interface:
-								ret[keyStr] = l.Transform(mapVal.Interface())
-							case reflect.String:
-								haveCard := strings.Contains(keyStr, "card") || strings.Contains(keyStr, "Card") || strings.Contains(keyStr, "CARD")
-								haveAcct := strings.Contains(keyStr, "acct_id")
-								haveId := strings.Contains(keyStr, "id") || strings.Contains(keyStr, "Id") || strings.Contains(keyStr, "ID")
-								havePhone := strings.Contains(keyStr, "phone") || strings.Contains(keyStr, "Phone") || strings.Contains(keyStr, "PHONE") ||
-									strings.Contains(keyStr, "mobile") || strings.Contains(keyStr, "Mobile")
 
-								switch {
-								case (haveCard && !haveId) || haveAcct:
-									if l.filterCard {
-										ret[keyStr] = ShrineAlipayAccountNumber(mapVal.Interface().(string))
-									} else {
+						if mapVal.IsValid() && mapVal.CanInterface() {
+							if mapVal.Kind() == reflect.Interface {
+								mapVal = reflect.Indirect(reflect.ValueOf(mapVal.Interface()))
+							}
+
+							if mapVal.IsValid() && mapVal.CanInterface() {
+								switch mapVal.Kind() {
+								case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Interface:
+									ret[keyStr] = l.transform(mapVal.Interface())
+								case reflect.String:
+									haveCard := strings.Contains(keyStr, "card_no") || strings.Contains(keyStr, "bank_card") || strings.Contains(keyStr, "CardNo") ||
+										strings.Contains(keyStr, "bank_code") || strings.Contains(keyStr, "acct_id") || strings.Contains(keyStr, "bank_branch") ||
+										strings.Contains(keyStr, "ali_opponent_id") || strings.Contains(keyStr, "alipay_id") || strings.Contains(keyStr, "AlipayId")
+									haveIdCard := strings.Contains(keyStr, "id_card") || strings.Contains(keyStr, "IdCard")
+									havePhone := strings.Contains(keyStr, "phone") || strings.Contains(keyStr, "Phone") || strings.Contains(keyStr, "PHONE") ||
+										strings.Contains(keyStr, "mobile") || strings.Contains(keyStr, "Mobile")
+
+									switch {
+									case haveCard:
+										if l.filterCard {
+											ret[keyStr] = ShrineAlipayAccountNumber(mapVal.Interface().(string))
+										} else {
+											ret[keyStr] = mapVal.Interface()
+										}
+									case haveIdCard:
+										if l.filterIdentity {
+											ret[keyStr] = shrineIdentity(mapVal.Interface().(string))
+										} else {
+											ret[keyStr] = mapVal.Interface()
+										}
+									case havePhone:
+										if l.filterPhone {
+											ret[keyStr] = ShrinePhoneNumber(mapVal.Interface().(string))
+										} else {
+											ret[keyStr] = mapVal.Interface()
+										}
+									default:
 										ret[keyStr] = mapVal.Interface()
 									}
-								case haveCard && haveId:
-									if l.filterIdentity {
-										ret[keyStr] = shrineIdentity(mapVal.Interface().(string))
-									} else {
-										ret[keyStr] = mapVal.Interface()
-									}
-								case havePhone:
-									if l.filterPhone {
-										ret[keyStr] = ShrinePhoneNumber(mapVal.Interface().(string))
-									} else {
-										ret[keyStr] = mapVal.Interface()
-									}
+								default:
+									ret[keyStr] = mapVal.Interface()
 								}
-							default:
-								ret[keyStr] = mapVal.Interface()
 							}
 						}
 					}
@@ -840,18 +864,23 @@ func (l *loggingT) Transform(v interface{}) interface{} {
 			for i := 0; i < val.Len(); i++ {
 				outerVal := reflect.Indirect(val.Index(i))
 				if outerVal.IsValid() && outerVal.CanInterface() {
-					switch outerVal.Kind() {
-					case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Interface:
-						ret[i] = l.Transform(outerVal.Interface())
-					default:
-						ret[i] = outerVal.Interface()
+					if outerVal.Kind() == reflect.Interface {
+						outerVal = reflect.Indirect(reflect.ValueOf(outerVal.Interface()))
+					}
+					if outerVal.IsValid() && outerVal.CanInterface() {
+						switch outerVal.Kind() {
+						case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Interface:
+							ret[i] = l.transform(outerVal.Interface())
+						default:
+							ret[i] = outerVal.Interface()
+						}
 					}
 				}
 			}
 			return ret
 		case reflect.Interface:
 			tempVal := val.Interface()
-			return l.Transform(tempVal)
+			return l.transform(tempVal)
 		default:
 			return v
 		}
@@ -1438,6 +1467,7 @@ func ShrineAlipayAccountNumber(alipayAccountNumber string) (shrineStr string) {
 	shrineStr = shrineCardNo(alipayAccountNumber)
 	return
 }
+
 
 func ShrineEmail(email string) (shrineStr string) {
 	endPos := len(email)
