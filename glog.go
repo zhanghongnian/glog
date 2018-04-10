@@ -788,146 +788,175 @@ func (l *loggingT) transform(v interface{}) interface{} {
 	// returns the value that v points to.
 	val := reflect.Indirect(reflect.ValueOf(v))
 	// Avoid panic
-	if val.IsValid() && val.CanInterface() {
-		switch val.Kind() {
-		case reflect.Struct:
-			// ret used to temporarily store information to be printed
-			ret := make(map[string]interface{}, val.NumField())
-			for i := 0; i < val.NumField(); i++ {
-				outerVal := reflect.Indirect(val.Field(i))
-
-				if outerVal.IsValid() && outerVal.CanInterface() {
-					field := val.Type().Field(i)
-
-					if outerVal.Kind() == reflect.Interface {
-						outerVal = reflect.Indirect(reflect.ValueOf(outerVal.Interface()))
-					}
-
-					if outerVal.IsValid() && outerVal.CanInterface() {
-						switch outerVal.Kind() {
-						case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Interface:
-							ret[field.Name] = l.transform(outerVal.Interface())
-						case reflect.String:
-							l.switchTag(&outerVal, &field, ret, i)
-						default:
-							ret[field.Name] = outerVal.Interface()
-						}
-					}
-				}
-			}
-			return ret
-		case reflect.Map:
-			ret := make(map[string]interface{}, val.Len())
-			keys := val.MapKeys()
-			for _, key := range keys {
-				if key.CanInterface() && key.IsValid() {
-					if keyStr, ok := key.Interface().(string); ok {
-						mapVal := reflect.Indirect(val.MapIndex(key))
-
-						if mapVal.IsValid() && mapVal.CanInterface() {
-							if mapVal.Kind() == reflect.Interface {
-								mapVal = reflect.Indirect(reflect.ValueOf(mapVal.Interface()))
-							}
-
-							if mapVal.IsValid() && mapVal.CanInterface() {
-								switch mapVal.Kind() {
-								case reflect.Map, reflect.Array, reflect.Struct, reflect.Interface:
-									ret[keyStr] = l.transform(mapVal.Interface())
-								case reflect.Slice:
-									// for handle type of map[string][]string
-									strSliceFlag := false
-									tmpSlice := make([]interface{}, mapVal.Len())
-									for i := 0; i < mapVal.Len(); i++ {
-										innerVal := reflect.Indirect(mapVal.Index(i))
-										if innerVal.IsValid() && innerVal.CanInterface() {
-											if innerVal.Kind() == reflect.Interface {
-												innerVal = reflect.Indirect(reflect.ValueOf(innerVal.Interface()))
-											}
-											if innerVal.IsValid() && innerVal.CanInterface() {
-												switch innerVal.Kind() {
-												case reflect.String:
-													strSliceFlag = true
-													if keyStr == "bank_code" {
-														tmpSlice[i] = ShrineCardNo(innerVal.Interface().(string))
-													} else {
-														tmpSlice[i] = innerVal.Interface()
-													}
-												default:
-													break
-												}
-											}
-										}
-									}
-									if strSliceFlag {
-										ret[keyStr] = tmpSlice
-									} else {
-										ret[keyStr] = l.transform(mapVal.Interface())
-									}
-								case reflect.String:
-									haveCard := strings.Contains(keyStr, "card_no") || strings.Contains(keyStr, "bank_card") || strings.Contains(keyStr, "CardNo") ||
-										strings.Contains(keyStr, "bank_code") || strings.Contains(keyStr, "acct_id") || strings.Contains(keyStr, "bank_branch") ||
-										strings.Contains(keyStr, "ali_opponent_id") || strings.Contains(keyStr, "alipay_id") || strings.Contains(keyStr, "AlipayId")
-									haveIdCard := strings.Contains(keyStr, "id_card") || strings.Contains(keyStr, "IdCard")
-									havePhone := strings.Contains(keyStr, "phone") || strings.Contains(keyStr, "Phone") || strings.Contains(keyStr, "PHONE") ||
-										strings.Contains(keyStr, "mobile") || strings.Contains(keyStr, "Mobile")
-
-									switch {
-									case haveCard:
-										if l.filterCard {
-											ret[keyStr] = ShrineAlipayAccountNumber(mapVal.Interface().(string))
-										} else {
-											ret[keyStr] = mapVal.Interface()
-										}
-									case haveIdCard:
-										if l.filterIdentity {
-											ret[keyStr] = ShrineIdentity(mapVal.Interface().(string))
-										} else {
-											ret[keyStr] = mapVal.Interface()
-										}
-									case havePhone:
-										if l.filterPhone {
-											ret[keyStr] = ShrinePhoneNumber(mapVal.Interface().(string))
-										} else {
-											ret[keyStr] = mapVal.Interface()
-										}
-									default:
-										ret[keyStr] = mapVal.Interface()
-									}
-								default:
-									ret[keyStr] = mapVal.Interface()
-								}
-							}
-						}
-					}
-				}
-			}
-			return ret
-		case reflect.Array, reflect.Slice:
-			ret := make([]interface{}, val.Len())
-			for i := 0; i < val.Len(); i++ {
-				outerVal := reflect.Indirect(val.Index(i))
-				if outerVal.IsValid() && outerVal.CanInterface() {
-					if outerVal.Kind() == reflect.Interface {
-						outerVal = reflect.Indirect(reflect.ValueOf(outerVal.Interface()))
-					}
-					if outerVal.IsValid() && outerVal.CanInterface() {
-						switch outerVal.Kind() {
-						case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Interface:
-							ret[i] = l.transform(outerVal.Interface())
-						default:
-							ret[i] = outerVal.Interface()
-						}
-					}
-				}
-			}
-			return ret
-		case reflect.Interface:
-			tempVal := val.Interface()
-			return l.transform(tempVal)
-		default:
-			return v
-		}
+	if !val.IsValid() || !val.CanInterface() {
+		return v
 	}
+
+	switch val.Kind() {
+	case reflect.Struct:
+		// ret used to temporarily store information to be printed
+		ret := make(map[string]interface{}, val.NumField())
+		for i := 0; i < val.NumField(); i++ {
+			outerVal := reflect.Indirect(val.Field(i))
+
+			if !outerVal.IsValid() || !outerVal.CanInterface() {
+				continue
+			}
+			field := val.Type().Field(i)
+
+			if outerVal.Kind() == reflect.Interface {
+				outerVal = reflect.Indirect(reflect.ValueOf(outerVal.Interface()))
+			}
+
+			if !outerVal.IsValid() || !outerVal.CanInterface() {
+				continue
+			}
+
+			switch outerVal.Kind() {
+			case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Interface:
+				ret[field.Name] = l.transform(outerVal.Interface())
+			case reflect.String:
+				l.switchTag(&outerVal, &field, ret, i)
+			default:
+				ret[field.Name] = outerVal.Interface()
+			}
+		}
+		return ret
+	case reflect.Map:
+		ret := make(map[string]interface{}, val.Len())
+		keys := val.MapKeys()
+		for _, key := range keys {
+			if !key.IsValid() || !key.CanInterface() {
+				continue
+			}
+			keyStr, ok := key.Interface().(string)
+
+			if !ok {
+				continue
+			}
+			mapVal := reflect.Indirect(val.MapIndex(key))
+
+			if !mapVal.IsValid() || !mapVal.CanInterface() {
+				continue
+			}
+
+			if mapVal.Kind() == reflect.Interface {
+				mapVal = reflect.Indirect(reflect.ValueOf(mapVal.Interface()))
+			}
+
+			if !mapVal.IsValid() || !mapVal.CanInterface() {
+				continue
+			}
+
+			switch mapVal.Kind() {
+			case reflect.Map, reflect.Array, reflect.Struct, reflect.Interface:
+				ret[keyStr] = l.transform(mapVal.Interface())
+			case reflect.Slice:
+				// for handle type of map[string][]string
+				strSliceFlag := false
+				tmpSlice := make([]interface{}, mapVal.Len())
+
+				for i := 0; i < mapVal.Len(); i++ {
+					innerVal := reflect.Indirect(mapVal.Index(i))
+					if !innerVal.IsValid() || !innerVal.CanInterface() {
+						continue
+					}
+
+					if innerVal.Kind() == reflect.Interface {
+						innerVal = reflect.Indirect(reflect.ValueOf(innerVal.Interface()))
+					}
+
+					if !innerVal.IsValid() || !innerVal.CanInterface() {
+						continue
+					}
+
+					switch innerVal.Kind() {
+					case reflect.String:
+						strSliceFlag = true
+
+						// handle type of map[string][]string, map["bank_code"] = ["612846129387468123", "62194621124345826"]
+						if keyStr == "bank_code" {
+							tmpSlice[i] = ShrineCardNo(innerVal.Interface().(string))
+						} else {
+							tmpSlice[i] = innerVal.Interface()
+						}
+					default:
+						break
+					}
+				}
+
+				if strSliceFlag {
+					ret[keyStr] = tmpSlice
+				} else {
+					ret[keyStr] = l.transform(mapVal.Interface())
+				}
+			case reflect.String:
+				// handle type of map[string]string, map["card_no"] = "612846129387468123" etc.
+				haveCard := keyStr == "card_no" || keyStr == "bank_card" || strings.Contains(keyStr, "CardNo") ||
+					strings.Contains(keyStr, "bank_code") || strings.Contains(keyStr, "acct_id") || strings.Contains(keyStr, "bank_branch") ||
+					strings.Contains(keyStr, "ali_opponent_id") || strings.Contains(keyStr, "alipay_id") || strings.Contains(keyStr, "AlipayId")
+				haveIdCard := keyStr == "id_card" || strings.Contains(keyStr, "IdCard")
+				havePhone := strings.Contains(keyStr, "phone") || strings.Contains(keyStr, "Phone") || strings.Contains(keyStr, "PHONE") ||
+					strings.Contains(keyStr, "mobile") || strings.Contains(keyStr, "Mobile")
+
+				switch {
+				case haveCard:
+					if l.filterCard {
+						ret[keyStr] = ShrineAlipayAccountNumber(mapVal.Interface().(string))
+					} else {
+						ret[keyStr] = mapVal.Interface()
+					}
+				case haveIdCard:
+					if l.filterIdentity {
+						ret[keyStr] = ShrineIdentity(mapVal.Interface().(string))
+					} else {
+						ret[keyStr] = mapVal.Interface()
+					}
+				case havePhone:
+					if l.filterPhone {
+						ret[keyStr] = ShrinePhoneNumber(mapVal.Interface().(string))
+					} else {
+						ret[keyStr] = mapVal.Interface()
+					}
+				default:
+					ret[keyStr] = mapVal.Interface()
+				}
+			default:
+				ret[keyStr] = mapVal.Interface()
+			}
+		}
+		return ret
+	case reflect.Array, reflect.Slice:
+		ret := make([]interface{}, val.Len())
+		for i := 0; i < val.Len(); i++ {
+			outerVal := reflect.Indirect(val.Index(i))
+			if !outerVal.IsValid() || !outerVal.CanInterface() {
+				continue
+			}
+
+			if outerVal.Kind() == reflect.Interface {
+				outerVal = reflect.Indirect(reflect.ValueOf(outerVal.Interface()))
+			}
+
+			if !outerVal.IsValid() || !outerVal.CanInterface() {
+				continue
+			}
+
+			switch outerVal.Kind() {
+			case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Interface:
+				ret[i] = l.transform(outerVal.Interface())
+			default:
+				ret[i] = outerVal.Interface()
+			}
+		}
+		return ret
+	case reflect.Interface:
+		tempVal := val.Interface()
+		return l.transform(tempVal)
+	default:
+		return v
+	}
+
 	return v
 }
 
