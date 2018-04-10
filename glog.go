@@ -765,7 +765,7 @@ func (l *loggingT) switchTag(val *reflect.Value, field *reflect.StructField, con
 			}
 		case name == "RawQuery", name == "RequestURI":
 			if ok {
-				container[field.Name] = l.shrineRequestField(str)
+				container[field.Name] = l.shrineRequestField(str, "&", "=")
 			} else {
 				container[field.Name] = val.Interface()
 			}
@@ -831,8 +831,38 @@ func (l *loggingT) transform(v interface{}) interface{} {
 
 							if mapVal.IsValid() && mapVal.CanInterface() {
 								switch mapVal.Kind() {
-								case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Interface:
+								case reflect.Map, reflect.Array, reflect.Struct, reflect.Interface:
 									ret[keyStr] = l.transform(mapVal.Interface())
+								case reflect.Slice:
+									// for handle type of map[string][]string
+									strSliceFlag := false
+									tmpSlice := make([]interface{}, mapVal.Len())
+									for i := 0; i < mapVal.Len(); i++ {
+										innerVal := reflect.Indirect(mapVal.Index(i))
+										if innerVal.IsValid() && innerVal.CanInterface() {
+											if innerVal.Kind() == reflect.Interface {
+												innerVal = reflect.Indirect(reflect.ValueOf(innerVal.Interface()))
+											}
+											if innerVal.IsValid() && innerVal.CanInterface() {
+												switch innerVal.Kind() {
+												case reflect.String:
+													strSliceFlag = true
+													if keyStr == "bank_code" {
+														tmpSlice[i] = ShrineCardNo(innerVal.Interface().(string))
+													} else {
+														tmpSlice[i] = innerVal.Interface()
+													}
+												default:
+													break
+												}
+											}
+										}
+									}
+									if strSliceFlag {
+										ret[keyStr] = tmpSlice
+									} else {
+										ret[keyStr] = l.transform(mapVal.Interface())
+									}
 								case reflect.String:
 									haveCard := strings.Contains(keyStr, "card_no") || strings.Contains(keyStr, "bank_card") || strings.Contains(keyStr, "CardNo") ||
 										strings.Contains(keyStr, "bank_code") || strings.Contains(keyStr, "acct_id") || strings.Contains(keyStr, "bank_branch") ||
@@ -1425,26 +1455,31 @@ func Exitf(format string, args ...interface{}) {
 	logging.printf(fatalLog, format, args...)
 }
 
-func (l *loggingT) shrineRequestField(str string) (shrineStr string) {
-	strs := strings.Split(str, "&")
+func ShrinePureString(str string, sepOut string, sepInner string) string {
+	return logging.shrineRequestField(str, sepOut, sepInner)
+}
+
+func (l *loggingT) shrineRequestField(str string, sepOut string, sepInner string) (shrineStr string) {
+	strs := strings.Split(str, sepOut)
 	for index := range strs {
-		tmpStrs := strings.Split(strs[index], "=")
-		switch tmpStrs[0] {
-		case "id_card":
+		tmpStrs := strings.Split(strs[index], sepInner)
+		switch {
+		case strings.Contains(tmpStrs[0], "id_card"):
 			if l.filterIdentity {
-				strs[index] = fmt.Sprintf("id_card=%s", ShrineIdentity(tmpStrs[1]))
+				tmpStrs[1] = ShrineIdentity(tmpStrs[1])
 			}
-		case "card_no":
+		case strings.Contains(tmpStrs[0], "card_no"):
 			if l.filterCard {
-				strs[index] = fmt.Sprintf("card_no=%s", ShrineCardNo(tmpStrs[1]))
+				tmpStrs[1] = ShrineCardNo(tmpStrs[1])
 			}
-		case "mobile":
+		case strings.Contains(tmpStrs[0], "mobile"):
 			if l.filterPhone {
-				strs[index] = fmt.Sprintf("mobile=%s", ShrinePhoneNumber(tmpStrs[1]))
+				tmpStrs[1] = ShrinePhoneNumber(tmpStrs[1])
 			}
 		}
+		strs[index] = strings.Join(tmpStrs, sepInner)
 	}
-	shrineStr = strings.Join(strs, "&")
+	shrineStr = strings.Join(strs, sepOut)
 	return
 }
 
