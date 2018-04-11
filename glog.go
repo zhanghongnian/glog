@@ -899,11 +899,11 @@ func (l *loggingT) transform(v interface{}) interface{} {
 				haveCard := keyStr == "card_no" || keyStr == "bank_card" || strings.Contains(keyStr, "CardNo") ||
 					strings.Contains(keyStr, "bank_code") || strings.Contains(keyStr, "acct_id") || strings.Contains(keyStr, "bank_branch") ||
 					strings.Contains(keyStr, "ali_opponent_id") || strings.Contains(keyStr, "alipay_id") || strings.Contains(keyStr, "AlipayId")
-				havaBankInfo := keyStr == "customer_bank_info" || keyStr == "producer_bank_info"
+				havaBankInfo := keyStr == "customer_bank_info" || keyStr == "producer_bank_info" || keyStr == "CH_PRODUCER_BANK_INFO" || keyStr == "CH_CUSTOMER_BANK_INFO"
 				haveIdCard := keyStr == "id_card" || strings.Contains(keyStr, "IdCard")
 				havePhone := strings.Contains(keyStr, "phone") || strings.Contains(keyStr, "Phone") || strings.Contains(keyStr, "PHONE") ||
 					strings.Contains(keyStr, "mobile") || strings.Contains(keyStr, "Mobile")
-				havaAddrTel := keyStr == "producer_address_tel" || keyStr == "customer_address_tel"
+				havaAddrTel := keyStr == "producer_address_tel" || keyStr == "customer_address_tel" || keyStr == "CH_PRODUCER_ADDRESS_TEL" || keyStr == "CH_CUSTOMER_ADDRESS_TEL"
 
 				switch {
 				case haveCard:
