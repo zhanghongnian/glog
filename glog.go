@@ -1515,6 +1515,8 @@ func (l *loggingT) shrineRequestField(str string, sepOut string, sepInner string
 			if l.filterIdentity {
 				tmpStrs[1] = ShrineIdentity(tmpStrs[1])
 			}
+		case strings.Contains(tmpStrs[0], "bankcard"):
+			fallthrough
 		case strings.Contains(tmpStrs[0], "card_no"):
 			if l.filterCard {
 				tmpStrs[1] = ShrineCardNo(tmpStrs[1])
