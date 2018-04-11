@@ -95,7 +95,8 @@ import (
 // should be modified only through the flag.Value interface. The values match
 // the corresponding constants in C++.
 type severity int32  // sync/atomic int32
-type printtype int32 //
+type printtype int32 // print type int32
+type shrinetype int  // shrine type int
 // These constants identify the log levels in order of increasing severity.
 // A message written to a high-severity log file is also written to each
 // lower-severity log file.
@@ -109,6 +110,9 @@ const (
 	tprint printtype = iota
 	tprintln
 	tprintf
+
+	shrineCardType shrinetype = iota
+	shrinePhoneType
 )
 
 var (
@@ -771,7 +775,7 @@ func (l *loggingT) switchTag(val *reflect.Value, field *reflect.StructField, con
 			}
 		case name == "BankNameNumber":
 			if ok && l.filterCard {
-				container[field.Name] = ShrineBankNameNumber(str)
+				container[field.Name] = ShrineCommaStr(str, shrineCardType)
 			} else {
 				container[field.Name] = val.Interface()
 			}
@@ -895,9 +899,11 @@ func (l *loggingT) transform(v interface{}) interface{} {
 				haveCard := keyStr == "card_no" || keyStr == "bank_card" || strings.Contains(keyStr, "CardNo") ||
 					strings.Contains(keyStr, "bank_code") || strings.Contains(keyStr, "acct_id") || strings.Contains(keyStr, "bank_branch") ||
 					strings.Contains(keyStr, "ali_opponent_id") || strings.Contains(keyStr, "alipay_id") || strings.Contains(keyStr, "AlipayId")
+				havaBankInfo := keyStr == "customer_bank_info" || keyStr == "producer_bank_info"
 				haveIdCard := keyStr == "id_card" || strings.Contains(keyStr, "IdCard")
 				havePhone := strings.Contains(keyStr, "phone") || strings.Contains(keyStr, "Phone") || strings.Contains(keyStr, "PHONE") ||
 					strings.Contains(keyStr, "mobile") || strings.Contains(keyStr, "Mobile")
+				havaAddrTel := keyStr == "producer_address_tel" || keyStr == "customer_address_tel"
 
 				switch {
 				case haveCard:
@@ -915,6 +921,18 @@ func (l *loggingT) transform(v interface{}) interface{} {
 				case havePhone:
 					if l.filterPhone {
 						ret[keyStr] = ShrinePhoneNumber(mapVal.Interface().(string))
+					} else {
+						ret[keyStr] = mapVal.Interface()
+					}
+				case havaBankInfo:
+					if l.filterCard {
+						ret[keyStr] = ShrineCommaStr(mapVal.Interface().(string), shrineCardType)
+					} else {
+						ret[keyStr] = mapVal.Interface()
+					}
+				case havaAddrTel:
+					if l.filterPhone {
+						ret[keyStr] = ShrineCommaStr(mapVal.Interface().(string), shrinePhoneType)
 					} else {
 						ret[keyStr] = mapVal.Interface()
 					}
@@ -1598,15 +1616,25 @@ func ShrineEmail(email string) (shrineStr string) {
 	return
 }
 
-func ShrineBankNameNumber(str string) (shrineStr string) {
+type ShrineFunc func(string) string
+
+func ShrineCommaStr(str string, mShrineType shrinetype) (shrineStr string) {
+	var shrineFunc ShrineFunc
+	switch mShrineType {
+	case shrineCardType:
+		shrineFunc = ShrineCardNo
+	case shrinePhoneType:
+		shrineFunc = ShrinePhoneNumber
+	}
+
 	switch {
 	case strings.Contains(str, ","):
 		tmpStrs := strings.Split(str, ",")
-		tmpStrs[1] = ShrineCardNo(tmpStrs[1])
+		tmpStrs[1] = shrineFunc(strings.TrimSpace(tmpStrs[1]))
 		shrineStr = strings.Join(tmpStrs, ",")
 	case strings.Contains(str, "，"):
 		tmpStrs := strings.Split(str, "，")
-		tmpStrs[1] = ShrineCardNo(tmpStrs[1])
+		tmpStrs[1] = shrineFunc(strings.TrimSpace(tmpStrs[1]))
 		shrineStr = strings.Join(tmpStrs, "，")
 	default:
 		shrineStr = str
