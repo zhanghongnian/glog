@@ -1516,6 +1516,8 @@ func (l *loggingT) shrineRequestField(str string, sepOut string, sepInner string
 	for index := range strs {
 		tmpStrs := strings.Split(strs[index], sepInner)
 		switch {
+		case strings.Contains(tmpStrs[0], `"num\"`):
+			fallthrough
 		case strings.Contains(tmpStrs[0], "id_card"):
 			if l.filterIdentity {
 				tmpStrs[1] = ShrineIdentity(tmpStrs[1])
