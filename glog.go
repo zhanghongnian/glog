@@ -879,9 +879,14 @@ func (l *loggingT) transform(v interface{}) interface{} {
 						strSliceFlag = true
 
 						// handle type of map[string][]string, map["bank_code"] = ["612846129387468123", "62194621124345826"]
-						if keyStr == "bank_code" {
-							tmpSlice[i] = ShrineCardNo(innerVal.Interface().(string))
-						} else {
+						switch keyStr {
+						case "bank_code", "bank_card", "alipay_id", "card_no":
+							tmpSlice[i] = ShrineAlipayAccountNumber(innerVal.Interface().(string))
+						case "id_card":
+							tmpSlice[i] = ShrineIdentity(innerVal.Interface().(string))
+						case "phone_no", "mobile":
+							tmpSlice[i] = ShrinePhoneNumber(innerVal.Interface().(string))
+						default:
 							tmpSlice[i] = innerVal.Interface()
 						}
 					default:
