@@ -789,6 +789,9 @@ func (l *loggingT) switchTag(val *reflect.Value, field *reflect.StructField, con
 // and the mobile phone number through the reflection structure tag
 // and slice key
 func (l *loggingT) transform(v interface{}) interface{} {
+	if _, ok := v.(error); ok {
+		return v
+	}
 	// returns the value that v points to.
 	val := reflect.Indirect(reflect.ValueOf(v))
 	// Avoid panic
