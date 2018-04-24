@@ -799,6 +799,12 @@ func (l *loggingT) transform(v interface{}) interface{} {
 		return v
 	}
 
+	methodVal := val.MethodByName("Format")
+
+	if methodVal.IsValid() {
+		return v
+	}
+
 	switch val.Kind() {
 	case reflect.Struct:
 		// ret used to temporarily store information to be printed
