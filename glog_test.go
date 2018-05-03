@@ -85,10 +85,118 @@ func setFlags() {
 	logging.toStderr = false
 }
 
+type Request struct {
+	RawQuery   string
+	RequestURI string
+	Form       string
+}
+
+type TestStruct struct {
+	Name         string
+	CH_CARD_NO   string `db:"CH_CARD_NO" filter:"card"`
+	CH_ID_CARD   string `db:"CH_ID_CARD" filter:"identity"`
+	TestSliceMap map[string][]string
+	TestMap      map[string]string
+	TestReq      *Request
+}
+
 func TestFilter(t *testing.T) {
 	setFlags()
 	defer logging.swap(logging.newBuffers())
 
+}
+
+// Test that Info works as advertised.
+func TestInfo(t *testing.T) {
+	setFlags()
+	defer logging.swap(logging.newBuffers())
+
+	mRawQuery := "card_no=13231223123152346&id_card=98173648123548317823&mobile=13243562635"
+	mRequestURI := "card_no=817624674236173234&id_card=62374818734678911&mobile=15951232523"
+	mForm := "card_no=389561275823423468&id_card=2845283472472742346&mobile=18743724534"
+	req := Request{
+		RawQuery:   mRawQuery,
+		RequestURI: mRequestURI,
+		Form:       mForm,
+	}
+	mSliceMap := map[string][]string{
+		"bank_code": {"18923755823466524", "6578259173782347234"},
+		"bank_roae": {"468173871782375483", "47628128947889205"},
+	}
+	mMap := map[string]string{
+		"card_no":   "19827676528372529846834",
+		"alipay_id": "1773868729@qq.com",
+		"cards_ss":  "18746572762342345623443",
+	}
+	cardNo, ID := "123897326471231263", "9399992392939293929392"
+	mTestStruct := TestStruct{
+		Name:         "Aline",
+		CH_CARD_NO:   cardNo,
+		CH_ID_CARD:   ID,
+		TestSliceMap: mSliceMap,
+		TestMap:      mMap,
+		TestReq:      &req,
+	}
+
+	Info(mTestStruct)
+
+	if !contains(infoLog, "I", t) {
+		t.Errorf("Info has wrong character: %q", contents(infoLog))
+	}
+	if !contains(infoLog, ShrineCardNo(cardNo), t) {
+		t.Error("Info failed")
+	}
+	if !contains(infoLog, ShrineIdentity(ID), t) {
+		t.Error("Info failed")
+	}
+	if !contains(infoLog, ShrineIdentity("98173648123548317823"), t) {
+		t.Error("Info failed")
+	}
+	if !contains(infoLog, ShrineIdentity("62374818734678911"), t) {
+		t.Error("Info failed")
+	}
+	if !contains(infoLog, "2845283472472742346", t) {
+		t.Error("Info failed")
+	}
+	if !contains(infoLog, ShrineCardNo("13231223123152346"), t) {
+		t.Error("Info failed")
+	}
+	if !contains(infoLog, ShrineCardNo("817624674236173234"), t) {
+		t.Error("Info failed")
+	}
+	if !contains(infoLog, "389561275823423468", t) {
+		t.Error("Info failed")
+	}
+	if !contains(infoLog, ShrinePhoneNumber("13243562635"), t) {
+		t.Error("Info failed")
+	}
+	if !contains(infoLog, ShrinePhoneNumber("15951232523"), t) {
+		t.Error("Info failed")
+	}
+	if !contains(infoLog, "389561275823423468", t) {
+		t.Error("Info failed")
+	}
+	if !contains(infoLog, ShrineCardNo("18923755823466524"), t) {
+		t.Error("Info failed")
+	}
+	if !contains(infoLog, ShrineCardNo("6578259173782347234"), t) {
+		t.Error("Info failed")
+	}
+	if !contains(infoLog, "468173871782375483", t) {
+		t.Error("Info failed")
+	}
+	if !contains(infoLog, "47628128947889205", t) {
+		t.Error("Info failed")
+	}
+	if !contains(infoLog, ShrineCardNo("19827676528372529846834"), t) {
+		t.Error("Info failed")
+	}
+	if !contains(infoLog, ShrineAlipayAccountNumber("1773868729@qq.com"), t) {
+		t.Error("Info failed")
+	}
+	if !contains(infoLog, "18746572762342345623443", t) {
+		t.Error("Info failed")
+	}
 }
 
 func TestInfoDepth(t *testing.T) {

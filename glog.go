@@ -80,6 +80,8 @@ import (
 	stdLog "log"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -93,6 +95,8 @@ import (
 // should be modified only through the flag.Value interface. The values match
 // the corresponding constants in C++.
 type severity int32  // sync/atomic int32
+type printtype int32 // print type int32
+type shrinetype int  // shrine type int
 // These constants identify the log levels in order of increasing severity.
 // A message written to a high-severity log file is also written to each
 // lower-severity log file.
@@ -102,6 +106,21 @@ const (
 	errorLog
 	fatalLog
 	numSeverity = 4
+
+	tprint printtype = iota
+	tprintln
+	tprintf
+
+	shrineCardType shrinetype = iota
+	shrinePhoneType
+)
+
+var (
+	Is2088BeginRe          = regexp.MustCompile(`^(2088)+[0-9]*$`)
+	IsPhoneNumberRe        = regexp.MustCompile(`^(1[3-9][0-9]\d{8})$`)
+	IsEmailRe              = regexp.MustCompile(`^([a-z_A-Z.0-9-])+@([a-zA-Z0-9_-])+\.([a-zA-Z0-9_-])+`)
+	IsPhoneNumberCountryRe = regexp.MustCompile(`^\d{1,}\-\d{1,}$`)
+	IsNumber               = regexp.MustCompile(`^[0-9]*$`)
 )
 
 const severityChar = "IWEF"
@@ -405,6 +424,9 @@ func init() {
 	// Default stderrThreshold is ERROR.
 	logging.stderrThreshold = errorLog
 
+	// Default filter card/salary/identity
+	logging.SetFilter(true, true, true)
+
 	logging.setVState(0, nil, false)
 	go logging.flushDaemon()
 }
@@ -452,6 +474,24 @@ type loggingT struct {
 	// safely using atomic.LoadInt32.
 	vmodule   moduleSpec // The state of the -vmodule flag.
 	verbosity Level      // V logging level, the value of the -v flag/
+	// usage:
+	// type User struct {
+	//     Name     string
+	//     IDCard   string		`"filter":"identity"`
+	//     Salary   int
+	//     BankCard string		`"filter:"card""`
+	// }
+	// var user = User{"Jone", "17263862997372453", 17777, "836274728264816746"}
+	// glog.Infoln(user)
+	//
+	// Output:
+	//    if filterCard == true
+	// >>>> {Jone 17263862997372453 17777 836274********6746}
+	//    if filterIdentity == true
+	// >>>> {Jone 172638*******2453 17777 836274728264816746}
+	filterCard     bool
+	filterIdentity bool
+	filterPhone    bool
 }
 
 // buffer holds a byte Buffer for reuse. The zero value is ready for use.
@@ -462,6 +502,24 @@ type buffer struct {
 }
 
 var logging loggingT
+
+func (l *loggingT) SetFilter(card, identity, phone bool) {
+	l.filterCard = card
+	l.filterIdentity = identity
+	l.filterPhone = phone
+}
+
+func (l *loggingT) SetCardFilter(card bool) {
+	l.filterCard = card
+}
+
+func (l *loggingT) SetIdentityFilter(identity bool) {
+	l.filterIdentity = identity
+}
+
+func (l *loggingT) SetPhoneFilter(phone bool) {
+	l.filterPhone = phone
+}
 
 // setVState sets a consistent state for V logging.
 // l.mu is held.
@@ -628,9 +686,11 @@ func (buf *buffer) someDigits(i, d int) int {
 
 func (l *loggingT) println(s severity, args ...interface{}) {
 	buf, file, line := l.header(s, 0)
-
-	fmt.Fprintln(buf, args...)
-
+	if l.filterCard || l.filterIdentity || l.filterPhone {
+		l.filter(tprintln, buf, "", args...)
+	} else {
+		fmt.Fprintln(buf, args...)
+	}
 	l.output(s, buf, file, line, false)
 }
 
@@ -640,9 +700,11 @@ func (l *loggingT) print(s severity, args ...interface{}) {
 
 func (l *loggingT) printDepth(s severity, depth int, args ...interface{}) {
 	buf, file, line := l.header(s, depth)
-
-	fmt.Fprint(buf, args...)
-
+	if l.filterCard || l.filterIdentity || l.filterPhone {
+		l.filter(tprint, buf, "", args...)
+	} else {
+		fmt.Fprint(buf, args...)
+	}
 	if buf.Bytes()[buf.Len()-1] != '\n' {
 		buf.WriteByte('\n')
 	}
@@ -651,13 +713,283 @@ func (l *loggingT) printDepth(s severity, depth int, args ...interface{}) {
 
 func (l *loggingT) printf(s severity, format string, args ...interface{}) {
 	buf, file, line := l.header(s, 0)
-
-	fmt.Fprintf(buf, format, args...)
-
+	if l.filterCard || l.filterIdentity || l.filterPhone {
+		l.filter(tprintf, buf, format, args...)
+	} else {
+		fmt.Fprintf(buf, format, args...)
+	}
 	if buf.Bytes()[buf.Len()-1] != '\n' {
 		buf.WriteByte('\n')
 	}
 	l.output(s, buf, file, line, false)
+}
+
+// filter - if type is struct, it's tag is card or identity or phone, mask this.
+// handle if type is []*Type, *Type, Struct in log struct.
+func (l *loggingT) filter(t printtype, buf io.Writer, format string, args ...interface{}) {
+	if len(args) > 0 {
+		for i := range args {
+			args[i] = l.transform(args[i])
+		}
+	}
+
+	switch t {
+	case tprint:
+		fmt.Fprint(buf, args...)
+	case tprintln:
+		fmt.Fprintln(buf, args...)
+	case tprintf:
+		fmt.Fprintf(buf, format, args...)
+	}
+}
+
+func (l *loggingT) switchTag(val *reflect.Value, field *reflect.StructField, container map[string]interface{}, index int) {
+	if val.CanInterface() && val.IsValid() {
+		tag := field.Tag.Get("filter")
+		name := field.Name
+		str, ok := val.Interface().(string)
+		switch {
+		case tag == "card":
+			if ok && l.filterCard {
+				container[field.Name] = ShrineAlipayAccountNumber(str)
+			} else {
+				container[field.Name] = val.Interface()
+			}
+		case tag == "identity":
+			if ok && l.filterIdentity {
+				container[field.Name] = ShrineIdentity(str)
+			} else {
+				container[field.Name] = val.Interface()
+			}
+		case tag == "phone":
+			if ok && l.filterPhone {
+				container[field.Name] = ShrinePhoneNumber(str)
+			} else {
+				container[field.Name] = val.Interface()
+			}
+		case name == "RawQuery", name == "RequestURI":
+			if ok {
+				container[field.Name] = l.shrineRequestField(str, "&", "=")
+			} else {
+				container[field.Name] = val.Interface()
+			}
+		case name == "BankNameNumber":
+			if ok && l.filterCard {
+				container[field.Name] = ShrineCommaStr(str, shrineCardType)
+			} else {
+				container[field.Name] = val.Interface()
+			}
+		default:
+			container[field.Name] = val.Interface()
+		}
+	}
+}
+
+// transform - Filtering the bank card number, the id card number
+// and the mobile phone number through the reflection structure tag
+// and slice key
+func (l *loggingT) transform(v interface{}) interface{} {
+	if _, ok := v.(error); ok {
+		return v
+	}
+	// returns the value that v points to.
+	val := reflect.Indirect(reflect.ValueOf(v))
+	// Avoid panic
+	if !val.IsValid() || !val.CanInterface() {
+		return v
+	}
+
+	methodVal := val.MethodByName("Format")
+
+	if methodVal.IsValid() {
+		return v
+	}
+
+	switch val.Kind() {
+	case reflect.Struct:
+		// ret used to temporarily store information to be printed
+		ret := make(map[string]interface{}, val.NumField())
+		for i := 0; i < val.NumField(); i++ {
+			outerVal := reflect.Indirect(val.Field(i))
+
+			if !outerVal.IsValid() || !outerVal.CanInterface() {
+				continue
+			}
+			field := val.Type().Field(i)
+
+			if outerVal.Kind() == reflect.Interface {
+				outerVal = reflect.Indirect(reflect.ValueOf(outerVal.Interface()))
+			}
+
+			if !outerVal.IsValid() || !outerVal.CanInterface() {
+				continue
+			}
+
+			switch outerVal.Kind() {
+			case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Interface:
+				ret[field.Name] = l.transform(outerVal.Interface())
+			case reflect.String:
+				l.switchTag(&outerVal, &field, ret, i)
+			default:
+				ret[field.Name] = outerVal.Interface()
+			}
+		}
+		return ret
+	case reflect.Map:
+		ret := make(map[string]interface{}, val.Len())
+		keys := val.MapKeys()
+		for _, key := range keys {
+			if !key.IsValid() || !key.CanInterface() {
+				continue
+			}
+			keyStr, ok := key.Interface().(string)
+
+			if !ok {
+				continue
+			}
+			mapVal := reflect.Indirect(val.MapIndex(key))
+
+			if !mapVal.IsValid() || !mapVal.CanInterface() {
+				continue
+			}
+
+			if mapVal.Kind() == reflect.Interface {
+				mapVal = reflect.Indirect(reflect.ValueOf(mapVal.Interface()))
+			}
+
+			if !mapVal.IsValid() || !mapVal.CanInterface() {
+				continue
+			}
+
+			switch mapVal.Kind() {
+			case reflect.Map, reflect.Array, reflect.Struct, reflect.Interface:
+				ret[keyStr] = l.transform(mapVal.Interface())
+			case reflect.Slice:
+				// for handle type of map[string][]string
+				strSliceFlag := false
+				tmpSlice := make([]interface{}, mapVal.Len())
+
+				for i := 0; i < mapVal.Len(); i++ {
+					innerVal := reflect.Indirect(mapVal.Index(i))
+					if !innerVal.IsValid() || !innerVal.CanInterface() {
+						continue
+					}
+
+					if innerVal.Kind() == reflect.Interface {
+						innerVal = reflect.Indirect(reflect.ValueOf(innerVal.Interface()))
+					}
+
+					if !innerVal.IsValid() || !innerVal.CanInterface() {
+						continue
+					}
+
+					switch innerVal.Kind() {
+					case reflect.String:
+						strSliceFlag = true
+
+						// handle type of map[string][]string, map["bank_code"] = ["612846129387468123", "62194621124345826"]
+						switch keyStr {
+						case "bank_code", "bank_card", "alipay_id", "card_no":
+							tmpSlice[i] = ShrineAlipayAccountNumber(innerVal.Interface().(string))
+						case "id_card":
+							tmpSlice[i] = ShrineIdentity(innerVal.Interface().(string))
+						case "phone_no", "mobile":
+							tmpSlice[i] = ShrinePhoneNumber(innerVal.Interface().(string))
+						default:
+							tmpSlice[i] = innerVal.Interface()
+						}
+					default:
+						break
+					}
+				}
+
+				if strSliceFlag {
+					ret[keyStr] = tmpSlice
+				} else {
+					ret[keyStr] = l.transform(mapVal.Interface())
+				}
+			case reflect.String:
+				// handle type of map[string]string, map["card_no"] = "612846129387468123" etc.
+				haveCard := keyStr == "card_no" || keyStr == "bank_card" || strings.Contains(keyStr, "CardNo") ||
+					strings.Contains(keyStr, "bank_code") || strings.Contains(keyStr, "acct_id") || strings.Contains(keyStr, "bank_branch") ||
+					strings.Contains(keyStr, "ali_opponent_id") || strings.Contains(keyStr, "alipay_id") || strings.Contains(keyStr, "AlipayId")
+				haveBankInfo := keyStr == "customer_bank_info" || keyStr == "producer_bank_info" || keyStr == "CH_PRODUCER_BANK_INFO" || keyStr == "CH_CUSTOMER_BANK_INFO"
+				haveIdCard := keyStr == "id_card" || strings.Contains(keyStr, "IdCard")
+				havePhone := strings.Contains(keyStr, "phone") || strings.Contains(keyStr, "Phone") || strings.Contains(keyStr, "PHONE") ||
+					strings.Contains(keyStr, "mobile") || strings.Contains(keyStr, "Mobile")
+				haveAddrTel := keyStr == "producer_address_tel" || keyStr == "customer_address_tel" || keyStr == "CH_PRODUCER_ADDRESS_TEL" || keyStr == "CH_CUSTOMER_ADDRESS_TEL"
+
+				switch {
+				case haveCard:
+					if l.filterCard {
+						ret[keyStr] = ShrineAlipayAccountNumber(mapVal.Interface().(string))
+					} else {
+						ret[keyStr] = mapVal.Interface()
+					}
+				case haveIdCard:
+					if l.filterIdentity {
+						ret[keyStr] = ShrineIdentity(mapVal.Interface().(string))
+					} else {
+						ret[keyStr] = mapVal.Interface()
+					}
+				case havePhone:
+					if l.filterPhone {
+						ret[keyStr] = ShrinePhoneNumber(mapVal.Interface().(string))
+					} else {
+						ret[keyStr] = mapVal.Interface()
+					}
+				case haveBankInfo:
+					if l.filterCard {
+						ret[keyStr] = ShrineCommaStr(mapVal.Interface().(string), shrineCardType)
+					} else {
+						ret[keyStr] = mapVal.Interface()
+					}
+				case haveAddrTel:
+					if l.filterPhone {
+						ret[keyStr] = ShrineCommaStr(mapVal.Interface().(string), shrinePhoneType)
+					} else {
+						ret[keyStr] = mapVal.Interface()
+					}
+				default:
+					ret[keyStr] = mapVal.Interface()
+				}
+			default:
+				ret[keyStr] = mapVal.Interface()
+			}
+		}
+		return ret
+	case reflect.Array, reflect.Slice:
+		ret := make([]interface{}, val.Len())
+		for i := 0; i < val.Len(); i++ {
+			outerVal := reflect.Indirect(val.Index(i))
+			if !outerVal.IsValid() || !outerVal.CanInterface() {
+				continue
+			}
+
+			if outerVal.Kind() == reflect.Interface {
+				outerVal = reflect.Indirect(reflect.ValueOf(outerVal.Interface()))
+			}
+
+			if !outerVal.IsValid() || !outerVal.CanInterface() {
+				continue
+			}
+
+			switch outerVal.Kind() {
+			case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Interface:
+				ret[i] = l.transform(outerVal.Interface())
+			default:
+				ret[i] = outerVal.Interface()
+			}
+		}
+		return ret
+	case reflect.Interface:
+		tempVal := val.Interface()
+		return l.transform(tempVal)
+	default:
+		return v
+	}
+
+	return v
 }
 
 // printWithFileLine behaves like print but uses the provided file and line number.  If
@@ -1182,4 +1514,207 @@ func Exitln(args ...interface{}) {
 func Exitf(format string, args ...interface{}) {
 	atomic.StoreUint32(&fatalNoStacks, 1)
 	logging.printf(fatalLog, format, args...)
+}
+
+func ShrinePureString(str string, sepOut string, sepInner string) string {
+	return logging.shrineRequestField(str, sepOut, sepInner)
+}
+
+func (l *loggingT) shrineRequestField(str string, sepOut string, sepInner string) (shrineStr string) {
+	strs := strings.Split(str, sepOut)
+	for index := range strs {
+		tmpStrs := strings.Split(strs[index], sepInner)
+		switch {
+		case strings.Contains(tmpStrs[0], `"num\"`):
+			if l.filterIdentity {
+				tmpStrs[1] = strMask(tmpStrs[1], 6, 10)
+			}
+		case strings.Contains(tmpStrs[0], `"num"`):
+			if l.filterIdentity {
+				tmpStrs[1] = strMask(tmpStrs[1], 5, 10)
+			}
+		case strings.Contains(tmpStrs[0], "id_card"):
+			if l.filterIdentity {
+				tmpStrs[1] = ShrineIdentity(tmpStrs[1])
+			}
+		case strings.Contains(tmpStrs[0], "bankcard"):
+			fallthrough
+		case strings.Contains(tmpStrs[0], "card_no"):
+			if l.filterCard {
+				tmpStrs[1] = ShrineCardNo(tmpStrs[1])
+			}
+		case strings.Contains(tmpStrs[0], "mobile"):
+			if l.filterPhone {
+				tmpStrs[1] = ShrinePhoneNumber(tmpStrs[1])
+			}
+		}
+		strs[index] = strings.Join(tmpStrs, sepInner)
+	}
+	shrineStr = strings.Join(strs, sepOut)
+	return
+}
+
+func ShrineCardNo(cardNo string) (shrineStr string) {
+	// 长度 [0,5] 的不作处理
+	l := len(cardNo)
+	if l <= 5 {
+		shrineStr = cardNo
+		return
+	}
+	// 长度 [6, 8] 前两位+后四位显示
+	if l <= 8 {
+		shrineStr = strMask(cardNo, 2, l-3)
+		return
+	}
+	// 长度 [9, 10] 前两位+后四位显示
+	if l <= 10 {
+		shrineStr = strMask(cardNo, 2, l-5)
+		return
+	}
+	// 长度 [11, 12] 前两位+后四位显示
+	if l <= 12 {
+		shrineStr = strMask(cardNo, 3, l-6)
+		return
+	}
+	// 长度 [13, 14] 前两位+后四位显示
+	if l <= 14 {
+		shrineStr = strMask(cardNo, 4, l-7)
+		return
+	}
+	// 长度 15 以上，前6位+后四位显示
+	shrineStr = strMask(cardNo, 6, l-10)
+	return
+}
+
+func ShrineIdentity(id string) string {
+	return strMask(id, 4, 10)
+}
+
+func ShrinePhoneNumber(phone string) (shrineStr string) {
+	return strMask(phone, 3, 4)
+}
+
+func ShrineAlipayAccountNumber(alipayAccountNumber string) (shrineStr string) {
+	//支付宝账号是11位手机号
+	if isPhoneNumber := IsValidPhoneNumber(alipayAccountNumber); isPhoneNumber {
+		shrineStr = ShrinePhoneNumber(alipayAccountNumber)
+		return
+	}
+	//判断是否是邮箱号
+	if isEmail := IsEmailRe.MatchString(alipayAccountNumber); isEmail {
+		shrineStr = ShrineEmail(alipayAccountNumber)
+		return
+	}
+	//其余类型
+	shrineStr = ShrineCardNo(alipayAccountNumber)
+	return
+}
+
+func ShrineEmail(email string) (shrineStr string) {
+	endPos := len(email)
+	startPos := strings.Index(email, "@")
+	headStr, err := SubString(email, 0, startPos)
+	if err != nil {
+		Warningf("SubString ShrineEmail headStr faild, email=%s error=%s", email, err)
+		shrineStr = ""
+		return
+	}
+	if len(headStr) > 3 {
+		headStr, err = SubString(headStr, 0, 3)
+		if err != nil {
+			Warningf("SubString ShrineEmail headStr faild, phoneNumber=%s headStr=%s error=%s", email, headStr, err)
+			shrineStr = ""
+			return
+		}
+		headStr += "***"
+	}
+
+	tailStr, err := SubString(email, startPos, endPos)
+	if err != nil {
+		Errorf("SubString ShrineEmail tailStr faild, phoneNumber=%s error=%s", email, err)
+		shrineStr = ""
+		return
+	}
+
+	shrineStr = headStr + tailStr
+	return
+}
+
+type ShrineFunc func(string) string
+
+func ShrineCommaStr(str string, mShrineType shrinetype) (shrineStr string) {
+	var shrineFunc ShrineFunc
+	switch mShrineType {
+	case shrineCardType:
+		shrineFunc = ShrineCardNo
+	case shrinePhoneType:
+		shrineFunc = ShrinePhoneNumber
+	}
+
+	switch {
+	case strings.Contains(str, ","):
+		tmpStrs := strings.Split(str, ",")
+		tmpStrs[1] = shrineFunc(strings.TrimSpace(tmpStrs[1]))
+		shrineStr = strings.Join(tmpStrs, ",")
+	case strings.Contains(str, "，"):
+		tmpStrs := strings.Split(str, "，")
+		tmpStrs[1] = shrineFunc(strings.TrimSpace(tmpStrs[1]))
+		shrineStr = strings.Join(tmpStrs, "，")
+	default:
+		shrineStr = str
+	}
+
+	return
+}
+
+func strMask(number string, offset int, bit int) (out string) {
+	b := []rune(number)
+	l := len(b)
+	if l < offset+1 {
+		out = number
+		return
+	} else {
+		if l > offset+bit {
+			out = string(b[0:offset]) + strings.Repeat("*", bit) + string(b[offset+bit:])
+		} else {
+			out = string(b[0:offset]) + strings.Repeat("*", l-offset)
+		}
+	}
+	return
+}
+
+//判断手机号码
+func IsValidPhoneNumber(phoneNumber string) bool {
+	var ok bool = true
+	if strings.Contains(phoneNumber, "-") {
+		if isPhoneNumberCountry := IsPhoneNumberCountryRe.MatchString(phoneNumber); isPhoneNumberCountry {
+			return ok
+		}
+
+	} else {
+		if isPhoneNumber := IsPhoneNumberRe.MatchString(phoneNumber); isPhoneNumber {
+			return ok
+		}
+	}
+	return !ok
+}
+
+//截取字符串 start 起点下标 end 终点下标(不包括)
+func SubString(str string, start int, end int) (subString string, err error) {
+	if end < start {
+		err = errors.New("参数不合法")
+		return
+	}
+	rs := []rune(str)
+	length := len(rs)
+	if start < 0 || start > length {
+		err = errors.New("参数不合法")
+		return
+	}
+	if end < 0 || end > length {
+		err = errors.New("参数不合法")
+		return
+	}
+	subString = string(rs[start:end])
+	return
 }
