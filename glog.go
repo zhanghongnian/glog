@@ -767,7 +767,7 @@ func (l *loggingT) switchTag(val *reflect.Value, field *reflect.StructField, con
 			} else {
 				container[field.Name] = val.Interface()
 			}
-		case name == "RawQuery", name == "RequestURI":
+		case name == "RawQuery", name == "RequestURI", name == "Referrer":
 			if ok {
 				container[field.Name] = l.shrineRequestField(str, "&", "=")
 			} else {
