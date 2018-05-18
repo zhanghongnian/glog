@@ -977,6 +977,8 @@ func (l *loggingT) transform(v interface{}) interface{} {
 			switch outerVal.Kind() {
 			case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Interface:
 				ret[i] = l.transform(outerVal.Interface())
+			case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+				return v
 			default:
 				ret[i] = outerVal.Interface()
 			}
