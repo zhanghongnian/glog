@@ -1525,32 +1525,34 @@ func ShrinePureString(str string, sepOut string, sepInner string) string {
 func (l *loggingT) shrineRequestField(str string, sepOut string, sepInner string) (shrineStr string) {
 	strs := strings.Split(str, sepOut)
 	for index := range strs {
-		tmpStrs := strings.Split(strs[index], sepInner)
-		switch {
-		case strings.Contains(tmpStrs[0], `"num\"`):
-			if l.filterIdentity {
-				tmpStrs[1] = strMask(tmpStrs[1], 6, 10)
+		if strings.Contains(strs[index], sepInner) {
+			tmpStrs := strings.Split(strs[index], sepInner)
+			switch {
+			case strings.Contains(tmpStrs[0], `"num\"`):
+				if l.filterIdentity {
+					tmpStrs[1] = strMask(tmpStrs[1], 6, 10)
+				}
+			case strings.Contains(tmpStrs[0], `"num"`):
+				if l.filterIdentity {
+					tmpStrs[1] = strMask(tmpStrs[1], 5, 10)
+				}
+			case strings.Contains(tmpStrs[0], "id_card"):
+				if l.filterIdentity {
+					tmpStrs[1] = ShrineIdentity(tmpStrs[1])
+				}
+			case strings.Contains(tmpStrs[0], "bankcard"):
+				fallthrough
+			case strings.Contains(tmpStrs[0], "card_no"):
+				if l.filterCard {
+					tmpStrs[1] = ShrineCardNo(tmpStrs[1])
+				}
+			case strings.Contains(tmpStrs[0], "mobile"):
+				if l.filterPhone {
+					tmpStrs[1] = ShrinePhoneNumber(tmpStrs[1])
+				}
 			}
-		case strings.Contains(tmpStrs[0], `"num"`):
-			if l.filterIdentity {
-				tmpStrs[1] = strMask(tmpStrs[1], 5, 10)
-			}
-		case strings.Contains(tmpStrs[0], "id_card"):
-			if l.filterIdentity {
-				tmpStrs[1] = ShrineIdentity(tmpStrs[1])
-			}
-		case strings.Contains(tmpStrs[0], "bankcard"):
-			fallthrough
-		case strings.Contains(tmpStrs[0], "card_no"):
-			if l.filterCard {
-				tmpStrs[1] = ShrineCardNo(tmpStrs[1])
-			}
-		case strings.Contains(tmpStrs[0], "mobile"):
-			if l.filterPhone {
-				tmpStrs[1] = ShrinePhoneNumber(tmpStrs[1])
-			}
+			strs[index] = strings.Join(tmpStrs, sepInner)
 		}
-		strs[index] = strings.Join(tmpStrs, sepInner)
 	}
 	shrineStr = strings.Join(strs, sepOut)
 	return
