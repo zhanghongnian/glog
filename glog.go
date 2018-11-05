@@ -115,6 +115,8 @@ const (
 	shrinePhoneType
 )
 
+const defaultFlushInterval = 30 * time.Second
+
 var (
 	Is2088BeginRe          = regexp.MustCompile(`^(2088)+[0-9]*$`)
 	IsPhoneNumberRe        = regexp.MustCompile(`^(1[3-9][0-9]\d{8})$`)
