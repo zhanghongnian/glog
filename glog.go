@@ -729,6 +729,19 @@ func (l *loggingT) printf(s severity, format string, args ...interface{}) {
 	l.output(s, buf, file, line, false)
 }
 
+func (l *loggingT) printfDepth(s severity, depth int, format string, args ...interface{}) {
+	buf, file, line := l.header(s, depth)
+	if l.filterCard || l.filterIdentity || l.filterPhone {
+		l.filter(tprintf, buf, format, args...)
+	} else {
+		fmt.Fprint(buf, args...)
+	}
+	if buf.Bytes()[buf.Len()-1] != '\n' {
+		buf.WriteByte('\n')
+	}
+	l.output(s, buf, file, line, false)
+}
+
 // filter - if type is struct, it's tag is card or identity or phone, mask this.
 // handle if type is []*Type, *Type, Struct in log struct.
 func (l *loggingT) filter(t printtype, buf io.Writer, format string, args ...interface{}) {
@@ -1418,6 +1431,11 @@ func Infof(format string, args ...interface{}) {
 	logging.printf(infoLog, format, args...)
 }
 
+// InfofDepth use format and depth print together
+func InfofDepth(depth int, format string, args ...interface{}) {
+	logging.printfDepth(infoLog, depth, format, args...)
+}
+
 // Warning logs to the WARNING and INFO logs.
 // Arguments are handled in the manner of fmt.Print; a newline is appended if missing.
 func Warning(args ...interface{}) {
@@ -1442,6 +1460,11 @@ func Warningf(format string, args ...interface{}) {
 	logging.printf(warningLog, format, args...)
 }
 
+// WarningfDepth use format and depth print together
+func WarningfDepth(depth int, format string, args ...interface{}) {
+	logging.printfDepth(warningLog, depth, format, args...)
+}
+
 // Error logs to the ERROR, WARNING, and INFO logs.
 // Arguments are handled in the manner of fmt.Print; a newline is appended if missing.
 func Error(args ...interface{}) {
@@ -1464,6 +1487,11 @@ func Errorln(args ...interface{}) {
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Errorf(format string, args ...interface{}) {
 	logging.printf(errorLog, format, args...)
+}
+
+// ErrorfDepth use format and depth print together
+func ErrorfDepth(depth int, format string, args ...interface{}) {
+	logging.printfDepth(errorLog, depth, format, args...)
 }
 
 // Fatal logs to the FATAL, ERROR, WARNING, and INFO logs,
@@ -1491,6 +1519,11 @@ func Fatalln(args ...interface{}) {
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Fatalf(format string, args ...interface{}) {
 	logging.printf(fatalLog, format, args...)
+}
+
+// FatalfDepth use format and depth print together
+func FatalfDepth(depth int, format string, args ...interface{}) {
+	logging.printfDepth(fatalLog, depth, format, args...)
 }
 
 // fatalNoStacks is non-zero if we are to exit without dumping goroutine stacks.
