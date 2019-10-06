@@ -416,13 +416,13 @@ type flushSyncWriter interface {
 }
 
 func init() {
-	flag.BoolVar(&logging.toStderr, "logtostderr", false, "log to standard error instead of files")
-	flag.BoolVar(&logging.alsoToStderr, "alsologtostderr", false, "log to standard error as well as files")
-	flag.Var(&logging.verbosity, "v", "log level for V logs")
-	flag.Var(&logging.stderrThreshold, "stderrthreshold", "logs at or above this threshold go to stderr")
-	flag.Var(&logging.vmodule, "vmodule", "comma-separated list of pattern=N settings for file-filtered logging")
-	flag.Var(&logging.traceLocation, "log_backtrace_at", "when logging hits line file:N, emit a stack trace")
-	flag.DurationVar(&logging.flushInterval, "flush_interval", defaultFlushInterval, "how often flush file")
+	flag.BoolVar(&logging.toStderr, "logtostderr2", false, "log to standard error instead of files")
+	flag.BoolVar(&logging.alsoToStderr, "alsologtostderr2", false, "log to standard error as well as files")
+	flag.Var(&logging.verbosity, "v2", "log level for V logs")
+	flag.Var(&logging.stderrThreshold, "stderrthreshold2", "logs at or above this threshold go to stderr")
+	flag.Var(&logging.vmodule, "vmodule2", "comma-separated list of pattern=N settings for file-filtered logging")
+	flag.Var(&logging.traceLocation, "log_backtrace_at2", "when logging hits line file:N, emit a stack trace")
+	flag.DurationVar(&logging.flushInterval, "flush_interval2", defaultFlushInterval, "how often flush file")
 
 	// Default stderrThreshold is ERROR.
 	logging.stderrThreshold = errorLog
